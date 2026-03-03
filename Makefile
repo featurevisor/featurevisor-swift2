@@ -24,6 +24,15 @@ update-monorepo:
 test-example-project:
 	swift run featurevisor test --projectDirectoryPath=./monorepo/examples/example-1
 
+assess-distribution-example-project:
+	swift run featurevisor \
+	assess-distribution \
+		--environment=production \
+		--feature=allowSignup \
+		--populateUuid=deviceId \
+		--n=10000 \
+		--projectDirectoryPath=./monorepo/examples/example-1
+
 setup-golang-sdk:
 	mkdir -p featurevisor-go
 	if [ ! -d "featurevisor-go/.git" ]; then \
