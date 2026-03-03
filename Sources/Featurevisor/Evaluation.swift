@@ -36,10 +36,15 @@ public struct Evaluation: Codable, Sendable {
     public var ruleKey: RuleKey?
     public var enabled: Bool?
     public var forceIndex: Int?
+    public var force: Force?
+    public var required: [RequiredValue]?
+    public var traffic: Traffic?
+    public var variation: Variation?
     public var variationValue: VariationValue?
     public var variableKey: VariableKey?
     public var variableValue: VariableValue?
     public var variableSchema: ResolvedVariableSchema?
+    public var variableOverrideIndex: Int?
     public var sticky: EvaluatedFeature?
     public var error: String?
 

@@ -73,9 +73,17 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
         return false
     case "in":
         guard let attr, let expected, case .array(let expectedValues) = expected else { return false }
+        switch attr {
+        case .string, .int, .double, .null: break
+        default: return false
+        }
         return expectedValues.contains(where: { anyValueEquals($0, attr) })
     case "notIn":
         guard let attr, let expected, case .array(let expectedValues) = expected else { return false }
+        switch attr {
+        case .string, .int, .double, .null: break
+        default: return false
+        }
         return !expectedValues.contains(where: { anyValueEquals($0, attr) })
     case "startsWith":
         guard case .string(let string)? = attr, case .string(let prefix)? = expected else { return false }

@@ -156,4 +156,79 @@ enum CLIHelpers {
         guard let actual else { return expectedValue == .null }
         return actual == expectedValue
     }
+
+    static func compareExpected(_ actual: AnyValue?, expected: Any?, schemaType: String?) -> Bool {
+        if schemaType == "json",
+           let expectedString = expected as? String,
+           let data = expectedString.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) {
+            return compareExpected(actual, expected: parsed)
+        }
+
+        guard let actual else {
+            return compareAnyExpected(nil, expected: expected)
+        }
+
+        return compareAnyExpected(actual.rawValue, expected: expected)
+    }
+
+    static func compareAnyExpected(_ actual: Any?, expected: Any?) -> Bool {
+        switch (actual, expected) {
+        case (nil, nil):
+            return true
+        case (nil, let rhs?):
+            return rhs is NSNull
+        case (let lhs?, nil):
+            if let lhs = lhs as? NSNull { return lhs is NSNull }
+            return false
+        case (let lhs as NSNull, let rhs as NSNull):
+            return lhs is NSNull && rhs is NSNull
+        case (let lhs as NSNumber, let rhs as NSNumber):
+            if isBool(lhs) || isBool(rhs) {
+                return lhs.boolValue == rhs.boolValue
+            }
+            return lhs.doubleValue == rhs.doubleValue
+        case (let lhs as String, let rhs as String):
+            return lhs == rhs
+        case (let lhs as [Any], let rhs as [Any]):
+            guard lhs.count == rhs.count else { return false }
+            for index in lhs.indices where !compareAnyExpected(lhs[index], expected: rhs[index]) {
+                return false
+            }
+            return true
+        case (let lhs as [String: Any], let rhs as [String: Any]):
+            guard lhs.count == rhs.count else { return false }
+            for (key, value) in lhs {
+                guard rhs.keys.contains(key), compareAnyExpected(value, expected: rhs[key]) else {
+                    return false
+                }
+            }
+            return true
+        default:
+            return String(describing: actual) == String(describing: expected)
+        }
+    }
+
+    static func evaluationFieldValue(_ evaluation: Evaluation, key: String) -> Any? {
+        switch key {
+        case "type": return evaluation.type.rawValue
+        case "featureKey": return evaluation.featureKey
+        case "reason": return evaluation.reason.rawValue
+        case "bucketKey": return evaluation.bucketKey
+        case "bucketValue": return evaluation.bucketValue
+        case "ruleKey": return evaluation.ruleKey
+        case "enabled": return evaluation.enabled
+        case "forceIndex": return evaluation.forceIndex
+        case "variationValue": return evaluation.variationValue
+        case "variableKey": return evaluation.variableKey
+        case "variableOverrideIndex": return evaluation.variableOverrideIndex
+        case "variableValue": return evaluation.variableValue?.rawValue
+        default:
+            return nil
+        }
+    }
+
+    private static func isBool(_ number: NSNumber) -> Bool {
+        String(cString: number.objCType) == "c"
+    }
 }

@@ -21,6 +21,9 @@ setup-monorepo:
 update-monorepo:
 	(cd monorepo && git pull origin main && make install && make build)
 
+test-example-project:
+	swift run featurevisor test --projectDirectoryPath=./monorepo/examples/example-1
+
 setup-golang-sdk:
 	mkdir -p featurevisor-go
 	if [ ! -d "featurevisor-go/.git" ]; then \

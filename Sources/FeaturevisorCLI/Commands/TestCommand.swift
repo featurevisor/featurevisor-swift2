@@ -257,7 +257,8 @@ struct TestCommand {
             }
 
             if let expectedVariation = assertion["expectedVariation"] {
-                let actual = sdk.getVariation(featureKey, context)
+                let overrideOptions = OverrideOptions(defaultVariationValue: assertion["defaultVariationValue"] as? String)
+                let actual = sdk.getVariation(featureKey, context, overrideOptions)
                 let ok: Bool
                 if expectedVariation is NSNull {
                     ok = (actual == nil)
@@ -269,9 +270,49 @@ struct TestCommand {
 
             if let expectedVariables = assertion["expectedVariables"] as? [String: Any] {
                 for (variableKey, expected) in expectedVariables {
-                    let actual = sdk.getVariable(featureKey, variableKey, context)
-                    if !CLIHelpers.compareExpected(actual, expected: expected) {
+                    let defaultValue = (assertion["defaultVariableValues"] as? [String: Any]).flatMap { $0[variableKey] }.map(CLIHelpers.anyToAnyValue)
+                    let actual = sdk.getVariable(featureKey, variableKey, context, OverrideOptions(defaultVariableValue: defaultValue))
+                    let schemaType = datafile.features[featureKey]?.variablesSchema?[variableKey]?.type
+                    if !CLIHelpers.compareExpected(actual, expected: expected, schemaType: schemaType) {
                         assertionFailed = true
+                    }
+                }
+            }
+
+            if let expectedEvaluations = assertion["expectedEvaluations"] as? [String: Any] {
+                if let expectedFlag = expectedEvaluations["flag"] as? [String: Any] {
+                    let evaluation = sdk.evaluateFlag(featureKey, context: context)
+                    for (key, expected) in expectedFlag {
+                        let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                        if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                            assertionFailed = true
+                        }
+                    }
+                }
+
+                if let expectedVariation = expectedEvaluations["variation"] as? [String: Any] {
+                    let evaluation = sdk.evaluateVariation(featureKey, context: context)
+                    for (key, expected) in expectedVariation {
+                        let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                        if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                            assertionFailed = true
+                        }
+                    }
+                }
+
+                if let expectedVariables = expectedEvaluations["variables"] as? [String: Any] {
+                    for (variableKey, rawExpected) in expectedVariables {
+                        guard let expectedVariableEval = rawExpected as? [String: Any] else {
+                            assertionFailed = true
+                            continue
+                        }
+                        let evaluation = sdk.evaluateVariable(featureKey, variableKey, context: context)
+                        for (key, expected) in expectedVariableEval {
+                            let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                            if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                                assertionFailed = true
+                            }
+                        }
                     }
                 }
             }
@@ -283,7 +324,7 @@ struct TestCommand {
                         childContextMap.merge(childContext, uniquingKeysWith: { _, new in new })
                     }
                     let childContext = CLIHelpers.parseContext(childContextMap)
-                    let childSticky = CLIHelpers.anyToSticky(childAssertion["sticky"])
+                    let childSticky = CLIHelpers.anyToSticky(assertion["sticky"])
                     let child = sdk.spawn(childContext, options: OverrideOptions(sticky: childSticky))
 
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
@@ -303,8 +344,47 @@ struct TestCommand {
                     if let expectedVariables = childAssertion["expectedVariables"] as? [String: Any] {
                         for (variableKey, expected) in expectedVariables {
                             let actual = child.getVariable(featureKey, variableKey)
-                            if !CLIHelpers.compareExpected(actual, expected: expected) {
+                            let schemaType = datafile.features[featureKey]?.variablesSchema?[variableKey]?.type
+                            if !CLIHelpers.compareExpected(actual, expected: expected, schemaType: schemaType) {
                                 assertionFailed = true
+                            }
+                        }
+                    }
+
+                    if let expectedEvaluations = childAssertion["expectedEvaluations"] as? [String: Any] {
+                        if let expectedFlag = expectedEvaluations["flag"] as? [String: Any] {
+                            let evaluation = child.evaluateFlag(featureKey)
+                            for (key, expected) in expectedFlag {
+                                let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                                if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                                    assertionFailed = true
+                                }
+                            }
+                        }
+
+                        if let expectedVariation = expectedEvaluations["variation"] as? [String: Any] {
+                            let evaluation = child.evaluateVariation(featureKey)
+                            for (key, expected) in expectedVariation {
+                                let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                                if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                                    assertionFailed = true
+                                }
+                            }
+                        }
+
+                        if let expectedVariables = expectedEvaluations["variables"] as? [String: Any] {
+                            for (variableKey, rawExpected) in expectedVariables {
+                                guard let expectedVariableEval = rawExpected as? [String: Any] else {
+                                    assertionFailed = true
+                                    continue
+                                }
+                                let evaluation = child.evaluateVariable(featureKey, variableKey)
+                                for (key, expected) in expectedVariableEval {
+                                    let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
+                                    if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                                        assertionFailed = true
+                                    }
+                                }
                             }
                         }
                     }

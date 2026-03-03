@@ -145,7 +145,14 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     }
 
     public func getVariable(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> VariableValue? {
-        evaluateVariable(featureKey, variableKey, context: context, options: options).variableValue
+        let evaluation = evaluateVariable(featureKey, variableKey, context: context, options: options)
+        if evaluation.variableSchema?.type == "json",
+           case .string(let jsonString)? = evaluation.variableValue,
+           let data = jsonString.data(using: .utf8),
+           let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) {
+            return parsed
+        }
+        return evaluation.variableValue
     }
 
     public func getVariableBoolean(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Bool? {
