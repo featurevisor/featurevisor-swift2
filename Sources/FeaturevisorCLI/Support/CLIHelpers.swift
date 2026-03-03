@@ -1,5 +1,5 @@
 import Foundation
-import FeaturevisorSDK
+import Featurevisor
 
 enum CLIHelpers {
     static func loggerLevel(_ options: CLIOptions) -> LogLevel {

@@ -8,32 +8,32 @@ let package = Package(
     ],
     products: [
         .library(
-            name: "FeaturevisorSDK",
-            targets: ["FeaturevisorSDK"]
+            name: "Featurevisor",
+            targets: ["Featurevisor"]
         ),
         .executable(
-            name: "featurevisor-swift",
+            name: "featurevisor",
             targets: ["FeaturevisorCLI"]
         ),
     ],
     targets: [
         .target(
-            name: "FeaturevisorSDK",
-            path: "Sources/FeaturevisorSDK"
+            name: "Featurevisor",
+            path: "Sources/Featurevisor"
         ),
         .executableTarget(
             name: "FeaturevisorCLI",
-            dependencies: ["FeaturevisorSDK"],
+            dependencies: ["Featurevisor"],
             path: "Sources/FeaturevisorCLI"
         ),
         .testTarget(
-            name: "FeaturevisorSDKTests",
-            dependencies: ["FeaturevisorSDK"],
-            path: "Tests/FeaturevisorSDKTests"
+            name: "FeaturevisorTests",
+            dependencies: ["Featurevisor"],
+            path: "Tests/FeaturevisorTests"
         ),
         .testTarget(
             name: "FeaturevisorCLITests",
-            dependencies: ["FeaturevisorCLI", "FeaturevisorSDK"],
+            dependencies: ["FeaturevisorCLI", "Featurevisor"],
             path: "Tests/FeaturevisorCLITests"
         ),
     ]

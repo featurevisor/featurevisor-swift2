@@ -1,7 +1,7 @@
 import XCTest
-@testable import FeaturevisorSDK
+@testable import Featurevisor
 
-final class FeaturevisorSDKTests: XCTestCase {
+final class FeaturevisorTests: XCTestCase {
     func testDatafileRoundTrip() throws {
         let datafile = DatafileContent(
             schemaVersion: "2",

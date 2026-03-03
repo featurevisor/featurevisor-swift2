@@ -1,5 +1,5 @@
 import Foundation
-import FeaturevisorSDK
+import Featurevisor
 
 struct BenchmarkOutput {
     let value: AnyValue?

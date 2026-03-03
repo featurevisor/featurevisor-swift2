@@ -1,5 +1,5 @@
 import Foundation
-import FeaturevisorSDK
+import Featurevisor
 
 struct AssessDistributionCommand {
     private func generateUuid() -> String {
