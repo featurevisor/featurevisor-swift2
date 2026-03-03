@@ -32,13 +32,6 @@ struct BenchmarkCommand {
     }
 
     func run(_ options: CLIOptions) -> Int32 {
-        // Fallback to native Featurevisor CLI benchmark for full parity when
-        // datafile contains advanced serialized structures not yet decoded by SDK models.
-        let delegatedCode = delegateIfNeeded(options)
-        if delegatedCode >= 0 {
-            return delegatedCode
-        }
-
         guard !options.environment.isEmpty else {
             print("Environment is required")
             return 1
@@ -95,28 +88,5 @@ struct BenchmarkCommand {
         print("Average duration: \(prettyDuration(output.duration / Double(options.n)))")
 
         return 0
-    }
-
-    private func delegateIfNeeded(_ options: CLIOptions) -> Int32 {
-        var args = ["benchmark"]
-        if !options.environment.isEmpty { args.append("--environment=\(options.environment)") }
-        if !options.feature.isEmpty { args.append("--feature=\(options.feature)") }
-        if !options.context.isEmpty { args.append("--context=\(options.context)") }
-        if options.n > 0 { args.append("--n=\(options.n)") }
-        if options.variation { args.append("--variation") }
-        if !options.variable.isEmpty { args.append("--variable=\(options.variable)") }
-        if !options.schemaVersion.isEmpty { args.append("--schema-version=\(options.schemaVersion)") }
-        if options.inflate > 0 { args.append("--inflate=\(options.inflate)") }
-        if options.verbose { args.append("--verbose") }
-        if options.quiet { args.append("--quiet") }
-
-        let result = FeaturevisorProcess.run(projectDirectoryPath: options.projectDirectoryPath, args: args)
-        if result.code == 0 {
-            if !result.stdout.isEmpty { print(result.stdout) }
-            if !result.stderr.isEmpty { fputs(result.stderr + "\n", stderr) }
-            return 0
-        }
-
-        return -1
     }
 }

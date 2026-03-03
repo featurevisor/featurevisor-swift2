@@ -19,12 +19,6 @@ struct AssessDistributionCommand {
     }
 
     func run(_ options: CLIOptions) -> Int32 {
-        // Prefer delegated execution for compatibility with full Featurevisor project semantics.
-        let delegatedCode = delegateIfPossible(options)
-        if delegatedCode >= 0 {
-            return delegatedCode
-        }
-
         guard !options.environment.isEmpty else {
             print("Environment is required")
             return 1
@@ -76,27 +70,5 @@ struct AssessDistributionCommand {
         }
 
         return 0
-    }
-
-    private func delegateIfPossible(_ options: CLIOptions) -> Int32 {
-        var args = ["assess-distribution"]
-        if !options.environment.isEmpty { args.append("--environment=\(options.environment)") }
-        if !options.feature.isEmpty { args.append("--feature=\(options.feature)") }
-        if !options.context.isEmpty { args.append("--context=\(options.context)") }
-        if options.n > 0 { args.append("--n=\(options.n)") }
-        if !options.schemaVersion.isEmpty { args.append("--schema-version=\(options.schemaVersion)") }
-        if options.inflate > 0 { args.append("--inflate=\(options.inflate)") }
-        if options.verbose { args.append("--verbose") }
-        if options.quiet { args.append("--quiet") }
-        for key in options.populateUuid { args.append("--populateUuid=\(key)") }
-
-        let result = FeaturevisorProcess.run(projectDirectoryPath: options.projectDirectoryPath, args: args)
-        if result.code == 0 {
-            if !result.stdout.isEmpty { print(result.stdout) }
-            if !result.stderr.isEmpty { fputs(result.stderr + "\n", stderr) }
-            return 0
-        }
-
-        return -1
     }
 }

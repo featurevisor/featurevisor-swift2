@@ -63,6 +63,12 @@ public final class DatafileReader: @unchecked Sendable {
         case .all:
             return true
         case .key(let key):
+            if key.hasPrefix("{") || key.hasPrefix("[") {
+                if let data = key.data(using: .utf8),
+                   let parsed = try? JSONDecoder().decode(GroupSegment.self, from: data) {
+                    return allSegmentsAreMatched(parsed, context: context)
+                }
+            }
             guard let segment = getSegment(key) else { return false }
             return segmentIsMatched(segment, context: context)
         case .list(let list), .and(let list):
@@ -100,7 +106,16 @@ public final class DatafileReader: @unchecked Sendable {
                 continue
             }
             if let conditions = force.conditions {
-                if allConditionsAreMatched(conditions, context: context) { return (force, index) }
+                switch conditions {
+                case .invalidToken(let raw) where raw.hasPrefix("{") || raw.hasPrefix("["):
+                    if let data = raw.data(using: .utf8),
+                       let parsed = try? JSONDecoder().decode(Condition.self, from: data),
+                       allConditionsAreMatched(parsed, context: context) {
+                        return (force, index)
+                    }
+                default:
+                    if allConditionsAreMatched(conditions, context: context) { return (force, index) }
+                }
                 continue
             }
         }

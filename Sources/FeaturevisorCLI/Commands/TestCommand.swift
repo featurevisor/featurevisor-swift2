@@ -1,22 +1,361 @@
 import Foundation
+import Featurevisor
+
+private struct TestSummary {
+    var passedTests = 0
+    var failedTests = 0
+    var passedAssertions = 0
+    var failedAssertions = 0
+}
 
 struct TestCommand {
     func run(_ options: CLIOptions) -> Int32 {
-        var args = ["test"]
-        if !options.keyPattern.isEmpty { args.append("--keyPattern=\(options.keyPattern)") }
-        if !options.assertionPattern.isEmpty { args.append("--assertionPattern=\(options.assertionPattern)") }
-        if options.onlyFailures { args.append("--onlyFailures") }
-        if options.showDatafile { args.append("--showDatafile") }
-        if options.withScopes { args.append("--with-scopes") }
-        if options.withTags { args.append("--with-tags") }
-        if options.verbose { args.append("--verbose") }
-        if options.quiet { args.append("--quiet") }
-        if options.inflate > 0 { args.append("--inflate=\(options.inflate)") }
-        if !options.schemaVersion.isEmpty { args.append("--schema-version=\(options.schemaVersion)") }
+        guard let config = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["config", "--json"]) as? [String: Any] else {
+            return 1
+        }
 
-        let result = FeaturevisorProcess.run(projectDirectoryPath: options.projectDirectoryPath, args: args)
-        if !result.stdout.isEmpty { print(result.stdout) }
-        if !result.stderr.isEmpty { fputs(result.stderr + "\n", stderr) }
-        return result.code
+        let schemaVersion = options.schemaVersion.isEmpty ? (config["schemaVersion"] as? String ?? "") : options.schemaVersion
+
+        let segments = loadSegments(options)
+        let scopesByName = getScopesByName(config)
+        let datafileCache = buildDatafileCache(options: options, config: config, schemaVersion: schemaVersion)
+
+        var testArgs = ["list", "--tests", "--applyMatrix", "--json"]
+        if !options.keyPattern.isEmpty { testArgs.append("--keyPattern=\(options.keyPattern)") }
+        if !options.assertionPattern.isEmpty { testArgs.append("--assertionPattern=\(options.assertionPattern)") }
+
+        guard let tests = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: testArgs) as? [[String: Any]] else {
+            return 1
+        }
+
+        var summary = TestSummary()
+
+        for test in tests {
+            if let featureKey = test["feature"] as? String {
+                let result = runFeatureTest(
+                    featureKey: featureKey,
+                    test: test,
+                    options: options,
+                    scopesByName: scopesByName,
+                    datafileCache: datafileCache
+                )
+                summary.passedTests += result.0 ? 1 : 0
+                summary.failedTests += result.0 ? 0 : 1
+                summary.passedAssertions += result.1
+                summary.failedAssertions += result.2
+                continue
+            }
+
+            if let segmentKey = test["segment"] as? String {
+                let result = runSegmentTest(segmentKey: segmentKey, test: test, segmentsByKey: segments, options: options)
+                summary.passedTests += result.0 ? 1 : 0
+                summary.failedTests += result.0 ? 0 : 1
+                summary.passedAssertions += result.1
+                summary.failedAssertions += result.2
+                continue
+            }
+        }
+
+        print("\n---\n")
+        if summary.failedTests == 0 {
+            print("\u{001B}[32mTest specs: \(summary.passedTests) passed, \(summary.failedTests) failed\u{001B}[0m")
+            print("\u{001B}[32mAssertions: \(summary.passedAssertions) passed, \(summary.failedAssertions) failed\u{001B}[0m")
+            return 0
+        }
+
+        print("\u{001B}[31mTest specs: \(summary.passedTests) passed, \(summary.failedTests) failed\u{001B}[0m")
+        print("\u{001B}[31mAssertions: \(summary.passedAssertions) passed, \(summary.failedAssertions) failed\u{001B}[0m")
+        return 1
+    }
+
+    private func loadSegments(_ options: CLIOptions) -> [String: Any] {
+        guard let arr = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["list", "--segments", "--json"]) as? [[String: Any]] else {
+            return [:]
+        }
+        var output: [String: Any] = [:]
+        for item in arr {
+            if let key = item["key"] as? String {
+                output[key] = item
+            }
+        }
+        return output
+    }
+
+    private func getScopesByName(_ config: [String: Any]) -> [String: [String: Any]] {
+        var result: [String: [String: Any]] = [:]
+        let scopes = config["scopes"] as? [[String: Any]] ?? []
+
+        for scope in scopes {
+            guard let name = scope["name"] as? String else { continue }
+            result[name] = scope["context"] as? [String: Any] ?? [:]
+        }
+
+        return result
+    }
+
+    private func datafileCacheKey(_ environment: String?) -> String {
+        if let environment, !environment.isEmpty { return environment }
+        return CLIHelpers.noEnvironmentKey
+    }
+
+    private func taggedDatafileCacheKey(_ environment: String?, _ tag: String) -> String {
+        if let environment, !environment.isEmpty { return "\(environment)-tag-\(tag)" }
+        return "tag-\(tag)"
+    }
+
+    private func scopedDatafileCacheKey(_ environment: String?, _ scope: String) -> String {
+        if let environment, !environment.isEmpty { return "\(environment)-scope-\(scope)" }
+        return "scope-\(scope)"
+    }
+
+    private func getDatafilesDirectoryPath(config: [String: Any], options: CLIOptions) -> String {
+        let configured = (config["datafilesDirectoryPath"] as? String) ?? "datafiles"
+        if configured.hasPrefix("/") { return configured }
+        return URL(fileURLWithPath: options.projectDirectoryPath).appendingPathComponent(configured).path
+    }
+
+    private func ensureDatafilesBuilt(options: CLIOptions, environment: String?, schemaVersion: String) {
+        var args = ["build", "--no-state-files"]
+        if let environment, !environment.isEmpty {
+            args.append("--environment=\(environment)")
+        }
+        if !schemaVersion.isEmpty {
+            args.append("--schema-version=\(schemaVersion)")
+        }
+        if options.inflate > 0 {
+            args.append("--inflate=\(options.inflate)")
+        }
+        _ = FeaturevisorProcess.run(projectDirectoryPath: options.projectDirectoryPath, args: args)
+    }
+
+    private func buildDatafileCache(options: CLIOptions, config: [String: Any], schemaVersion: String) -> [String: DatafileContent] {
+        var cache: [String: DatafileContent] = [:]
+        let envs = CLIHelpers.stringArray(config["environments"])
+        let environments: [String?] = envs.isEmpty ? [nil] : envs.map(Optional.some)
+
+        for environment in environments {
+            guard let base = CLIHelpers.buildDatafileJSON(
+                projectDirectoryPath: options.projectDirectoryPath,
+                environment: environment,
+                schemaVersion: schemaVersion,
+                inflate: options.inflate,
+                tag: nil
+            ) else { continue }
+
+            cache[datafileCacheKey(environment)] = base
+
+            if options.withTags {
+                for tag in CLIHelpers.stringArray(config["tags"]) {
+                    if let tagged = CLIHelpers.buildDatafileJSON(
+                        projectDirectoryPath: options.projectDirectoryPath,
+                        environment: environment,
+                        schemaVersion: schemaVersion,
+                        inflate: options.inflate,
+                        tag: tag
+                    ) {
+                        cache[taggedDatafileCacheKey(environment, tag)] = tagged
+                    }
+                }
+            }
+
+            if options.withScopes {
+                ensureDatafilesBuilt(options: options, environment: environment, schemaVersion: schemaVersion)
+                let dir = getDatafilesDirectoryPath(config: config, options: options)
+                let scopes = config["scopes"] as? [[String: Any]] ?? []
+                for scope in scopes {
+                    guard let scopeName = scope["name"] as? String else { continue }
+                    let filename = "featurevisor-scope-\(scopeName).json"
+                    let path: String
+                    if let environment, !environment.isEmpty {
+                        path = URL(fileURLWithPath: dir).appendingPathComponent(environment).appendingPathComponent(filename).path
+                    } else {
+                        path = URL(fileURLWithPath: dir).appendingPathComponent(filename).path
+                    }
+
+                    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+                          let datafile = try? DatafileContent.fromData(data) else { continue }
+                    cache[scopedDatafileCacheKey(environment, scopeName)] = datafile
+                }
+            }
+        }
+
+        return cache
+    }
+
+    private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> FeaturevisorInstance {
+        let sticky = CLIHelpers.anyToSticky(assertion["sticky"])
+        let forcedAt = CLIHelpers.doubleValue(assertion["at"])
+        let hook = Hook(name: "test-hook", bucketValue: { current in
+            if let at = forcedAt {
+                return Int(at * 1000)
+            }
+            return current
+        })
+
+        return createInstance(
+            InstanceOptions(
+                datafile: datafile,
+                logLevel: CLIHelpers.loggerLevel(options),
+                sticky: sticky,
+                hooks: [hook]
+            )
+        )
+    }
+
+    private func runFeatureTest(
+        featureKey: String,
+        test: [String: Any],
+        options: CLIOptions,
+        scopesByName: [String: [String: Any]],
+        datafileCache: [String: DatafileContent]
+    ) -> (Bool, Int, Int) {
+        guard let assertions = test["assertions"] as? [[String: Any]] else {
+            return (false, 0, 1)
+        }
+
+        var passed = 0
+        var failed = 0
+
+        for assertion in assertions {
+            let env = assertion["environment"] as? String
+            let scope = assertion["scope"] as? String
+            let tag = assertion["tag"] as? String
+
+            let cacheKey: String
+            if let scope {
+                cacheKey = scopedDatafileCacheKey(env, scope)
+            } else if let tag {
+                cacheKey = taggedDatafileCacheKey(env, tag)
+            } else {
+                cacheKey = datafileCacheKey(env)
+            }
+
+            guard let datafile = datafileCache[cacheKey] ?? datafileCache[datafileCacheKey(env)] else {
+                failed += 1
+                continue
+            }
+
+            let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
+
+            var contextMap: [String: Any] = [:]
+            if let scope, !options.withScopes, let scopedContext = scopesByName[scope] {
+                contextMap.merge(scopedContext, uniquingKeysWith: { _, new in new })
+            }
+            if let assertionContext = assertion["context"] as? [String: Any] {
+                contextMap.merge(assertionContext, uniquingKeysWith: { _, new in new })
+            }
+            let context = CLIHelpers.parseContext(contextMap)
+            sdk.setContext(context)
+
+            var assertionFailed = false
+
+            if let expectedEnabled = assertion["expectedToBeEnabled"] as? Bool {
+                let actual = sdk.isEnabled(featureKey, context)
+                if actual != expectedEnabled {
+                    assertionFailed = true
+                }
+            }
+
+            if let expectedVariation = assertion["expectedVariation"] {
+                let actual = sdk.getVariation(featureKey, context)
+                let ok: Bool
+                if expectedVariation is NSNull {
+                    ok = (actual == nil)
+                } else {
+                    ok = (actual == (expectedVariation as? String))
+                }
+                if !ok { assertionFailed = true }
+            }
+
+            if let expectedVariables = assertion["expectedVariables"] as? [String: Any] {
+                for (variableKey, expected) in expectedVariables {
+                    let actual = sdk.getVariable(featureKey, variableKey, context)
+                    if !CLIHelpers.compareExpected(actual, expected: expected) {
+                        assertionFailed = true
+                    }
+                }
+            }
+
+            if let children = assertion["children"] as? [[String: Any]] {
+                for childAssertion in children {
+                    var childContextMap = contextMap
+                    if let childContext = childAssertion["context"] as? [String: Any] {
+                        childContextMap.merge(childContext, uniquingKeysWith: { _, new in new })
+                    }
+                    let childContext = CLIHelpers.parseContext(childContextMap)
+                    let childSticky = CLIHelpers.anyToSticky(childAssertion["sticky"])
+                    let child = sdk.spawn(childContext, options: OverrideOptions(sticky: childSticky))
+
+                    if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
+                       child.isEnabled(featureKey) != expectedEnabled {
+                        assertionFailed = true
+                    }
+                    if let expectedVariation = childAssertion["expectedVariation"] {
+                        let actual = child.getVariation(featureKey)
+                        let ok: Bool
+                        if expectedVariation is NSNull {
+                            ok = (actual == nil)
+                        } else {
+                            ok = (actual == (expectedVariation as? String))
+                        }
+                        if !ok { assertionFailed = true }
+                    }
+                    if let expectedVariables = childAssertion["expectedVariables"] as? [String: Any] {
+                        for (variableKey, expected) in expectedVariables {
+                            let actual = child.getVariable(featureKey, variableKey)
+                            if !CLIHelpers.compareExpected(actual, expected: expected) {
+                                assertionFailed = true
+                            }
+                        }
+                    }
+                }
+            }
+
+            if assertionFailed {
+                failed += 1
+            } else {
+                passed += 1
+            }
+        }
+
+        let ok = failed == 0
+        if !options.onlyFailures || !ok {
+            print("Testing feature: \(featureKey) => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
+        }
+        return (ok, passed, failed)
+    }
+
+    private func runSegmentTest(
+        segmentKey: String,
+        test: [String: Any],
+        segmentsByKey: [String: Any],
+        options: CLIOptions
+    ) -> (Bool, Int, Int) {
+        guard let assertions = test["assertions"] as? [[String: Any]],
+              let segment = segmentsByKey[segmentKey] as? [String: Any],
+              let rawConditions = segment["conditions"] else {
+            return (false, 0, 1)
+        }
+
+        let conditions = CLIHelpers.anyToCondition(rawConditions)
+        var passed = 0
+        var failed = 0
+
+        for assertion in assertions {
+            let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
+            let actual = allConditionsMatched(conditions, context: context)
+            let expected = (assertion["expectedToMatch"] as? Bool) ?? false
+            if actual == expected {
+                passed += 1
+            } else {
+                failed += 1
+            }
+        }
+
+        let ok = failed == 0
+        if !options.onlyFailures || !ok {
+            print("Testing segment: \(segmentKey) => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
+        }
+        return (ok, passed, failed)
     }
 }

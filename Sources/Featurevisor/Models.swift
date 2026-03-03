@@ -147,7 +147,7 @@ public struct BucketByOr: Codable, Equatable, Sendable {
 public struct Variation: Codable, Equatable, Sendable {
     public var description: String?
     public var value: VariationValue
-    public var weight: Int?
+    public var weight: Double?
     public var variables: [VariableKey: VariableValue]?
     public var variableOverrides: [VariableKey: [VariableOverride]]?
 }
@@ -175,7 +175,7 @@ public struct Traffic: Codable, Equatable, Sendable {
     public var enabled: Bool?
     public var variation: VariationValue?
     public var variables: [String: VariableValue]?
-    public var variationWeights: [String: Int]?
+    public var variationWeights: [String: Double]?
     public var variableOverrides: [VariableKey: [VariableOverride]]?
     public var allocation: [Allocation]?
 }

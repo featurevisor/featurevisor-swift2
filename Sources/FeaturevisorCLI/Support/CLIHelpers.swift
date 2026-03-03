@@ -2,6 +2,8 @@ import Foundation
 import Featurevisor
 
 enum CLIHelpers {
+    static let noEnvironmentKey = "__no_environment__"
+
     static func loggerLevel(_ options: CLIOptions) -> LogLevel {
         if options.verbose { return .debug }
         if options.quiet { return .error }
@@ -13,6 +15,11 @@ enum CLIHelpers {
         guard let object = try? JSONSerialization.jsonObject(with: data) else { return [:] }
         guard let dict = object as? [String: Any] else { return [:] }
         return dict.mapValues(anyToAnyValue)
+    }
+
+    static func parseContext(_ raw: [String: Any]?) -> Context {
+        guard let raw else { return [:] }
+        return raw.mapValues(anyToAnyValue)
     }
 
     static func anyToAnyValue(_ value: Any) -> AnyValue {
@@ -37,11 +44,29 @@ enum CLIHelpers {
         }
     }
 
-    static func buildDatafileJSON(projectDirectoryPath: String, environment: String, schemaVersion: String, inflate: Int, tag: String? = nil) -> DatafileContent? {
-        var args = ["build", "--environment=\(environment)", "--json"]
+    static func parseDatafile(_ json: String) -> DatafileContent? {
+        try? DatafileContent.fromJSON(json)
+    }
+
+    static func runJSON(projectDirectoryPath: String, args: [String]) -> Any? {
+        let result = FeaturevisorProcess.run(projectDirectoryPath: projectDirectoryPath, args: args)
+        guard result.code == 0 else {
+            if !result.stderr.isEmpty { fputs(result.stderr + "\n", stderr) }
+            return nil
+        }
+        guard let data = result.stdout.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    static func buildDatafileJSON(projectDirectoryPath: String, environment: String?, schemaVersion: String, inflate: Int, tag: String? = nil) -> DatafileContent? {
+        var args = ["build"]
+        if let environment, !environment.isEmpty {
+            args.append("--environment=\(environment)")
+        }
         if !schemaVersion.isEmpty { args.append("--schema-version=\(schemaVersion)") }
         if inflate > 0 { args.append("--inflate=\(inflate)") }
         if let tag { args.append("--tag=\(tag)") }
+        args.append("--json")
 
         let result = FeaturevisorProcess.run(projectDirectoryPath: projectDirectoryPath, args: args)
         guard result.code == 0 else {
@@ -49,5 +74,86 @@ enum CLIHelpers {
             return nil
         }
         return try? DatafileContent.fromJSON(result.stdout)
+    }
+
+    static func mapStringAny(_ value: Any?) -> [String: Any]? {
+        value as? [String: Any]
+    }
+
+    static func stringArray(_ value: Any?) -> [String] {
+        (value as? [Any])?.compactMap { $0 as? String } ?? []
+    }
+
+    static func boolValue(_ value: Any?) -> Bool? {
+        value as? Bool
+    }
+
+    static func doubleValue(_ value: Any?) -> Double? {
+        if let double = value as? Double { return double }
+        if let int = value as? Int { return Double(int) }
+        return nil
+    }
+
+    static func stringValue(_ value: Any?) -> String? {
+        value as? String
+    }
+
+    static func anyToCondition(_ value: Any) -> Condition {
+        if let string = value as? String {
+            if string == "*" { return .all }
+            if let data = string.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) {
+                return anyToCondition(json)
+            }
+            return .invalidToken(string)
+        }
+
+        if let array = value as? [Any] {
+            return .list(array.map(anyToCondition))
+        }
+
+        if let object = value as? [String: Any] {
+            if let and = object["and"] as? [Any] {
+                return .and(and.map(anyToCondition))
+            }
+            if let or = object["or"] as? [Any] {
+                return .or(or.map(anyToCondition))
+            }
+            if let not = object["not"] as? [Any] {
+                return .not(not.map(anyToCondition))
+            }
+            if let attribute = object["attribute"] as? String,
+               let op = object["operator"] as? String {
+                let value = object["value"].map(anyToAnyValue)
+                let flags = object["regexFlags"] as? String
+                return .predicate(ConditionPredicate(attribute: attribute, operator: op, value: value, regexFlags: flags))
+            }
+        }
+
+        return .invalidToken("invalid")
+    }
+
+    static func anyToSticky(_ value: Any?) -> StickyFeatures? {
+        guard let object = value as? [String: Any] else { return nil }
+        var result: StickyFeatures = [:]
+
+        for (featureKey, raw) in object {
+            guard let featureMap = raw as? [String: Any],
+                  let enabled = featureMap["enabled"] as? Bool else {
+                continue
+            }
+            let variation = featureMap["variation"] as? String
+            let variables = (featureMap["variables"] as? [String: Any])?.mapValues(anyToAnyValue)
+            result[featureKey] = EvaluatedFeature(enabled: enabled, variation: variation, variables: variables)
+        }
+
+        return result
+    }
+
+    static func compareExpected(_ actual: AnyValue?, expected: Any?) -> Bool {
+        guard let expected else { return actual == nil || actual == .null }
+        let expectedValue = anyToAnyValue(expected)
+        guard let actual else { return expectedValue == .null }
+        return actual == expectedValue
     }
 }
