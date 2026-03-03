@@ -51,8 +51,10 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     }
 
     public func setDatafile(_ datafile: DatafileContent) {
-        self.datafileReader = DatafileReader(datafile: datafile, logger: logger)
-        emitter.trigger(.datafileSet, payload: EventPayload(["revision": datafile.revision]))
+        let newDatafileReader = DatafileReader(datafile: datafile, logger: logger)
+        let details = getParamsForDatafileSetEvent(previousDatafileReader: datafileReader, newDatafileReader: newDatafileReader)
+        self.datafileReader = newDatafileReader
+        emitter.trigger(.datafileSet, payload: EventPayload(details))
     }
 
     public func setDatafile(json: String) {
@@ -64,12 +66,14 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     }
 
     public func setSticky(_ sticky: StickyFeatures, replace: Bool = false) {
+        let previousSticky = self.sticky ?? [:]
         if replace {
             self.sticky = sticky
         } else {
             self.sticky = (self.sticky ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
         }
-        emitter.trigger(.stickySet)
+        let payload = getParamsForStickySetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: self.sticky ?? [:], replace: replace)
+        emitter.trigger(.stickySet, payload: EventPayload(payload))
     }
 
     public func getRevision() -> String { datafileReader.getRevision() }
@@ -93,7 +97,10 @@ public final class FeaturevisorInstance: @unchecked Sendable {
         } else {
             self.context = self.context.merging(context, uniquingKeysWith: { _, new in new })
         }
-        emitter.trigger(.contextSet)
+        emitter.trigger(.contextSet, payload: EventPayload([
+            "context": (try? JSONSerialization.string(from: self.context)) ?? "{}",
+            "replaced": replace ? "true" : "false",
+        ]))
     }
 
     public func getContext(_ context: Context? = nil) -> Context {
@@ -142,47 +149,56 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     }
 
     public func getVariableBoolean(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Bool? {
-        getVariable(featureKey, variableKey, context, options)?.asBool()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "boolean")?.asBool()
     }
 
     public func getVariableString(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> String? {
-        getVariable(featureKey, variableKey, context, options)?.asString()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "string")?.asString()
     }
 
     public func getVariableInteger(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Int? {
-        getVariable(featureKey, variableKey, context, options)?.asInt()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "integer")?.asInt()
     }
 
     public func getVariableDouble(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Double? {
-        getVariable(featureKey, variableKey, context, options)?.asDouble()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "double")?.asDouble()
     }
 
     public func getVariableArray(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> [AnyValue]? {
-        getVariable(featureKey, variableKey, context, options)?.asArray()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "array")?.asArray()
     }
 
     public func getVariableObject(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> [String: AnyValue]? {
-        getVariable(featureKey, variableKey, context, options)?.asObject()
+        getValueByType(getVariable(featureKey, variableKey, context, options), fieldType: "object")?.asObject()
     }
 
     public func getVariableJSON(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> AnyValue? {
         getVariable(featureKey, variableKey, context, options)
     }
 
-    public func getAllEvaluations(_ context: Context = [:]) -> EvaluatedFeatures {
+    public func getAllEvaluations(_ context: Context = [:], _ featureKeys: [FeatureKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedFeatures {
         var result: EvaluatedFeatures = [:]
-        for key in datafileReader.getFeatureKeys() {
-            let enabled = isEnabled(key, context)
-            let variation = getVariation(key, context)
+        let targetKeys = featureKeys.isEmpty ? datafileReader.getFeatureKeys() : featureKeys
+        for key in targetKeys {
+            let enabled = isEnabled(key, context, options)
+            let variation = getVariation(key, context, options)
             var variables: [VariableKey: VariableValue] = [:]
             for variableKey in datafileReader.getVariableKeys(key) {
-                if let value = getVariable(key, variableKey, context) {
+                if let value = getVariable(key, variableKey, context, options) {
                     variables[variableKey] = value
                 }
             }
             result[key] = EvaluatedFeature(enabled: enabled, variation: variation, variables: variables.isEmpty ? nil : variables)
         }
         return result
+    }
+}
+
+private extension JSONSerialization {
+    static func string(from context: Context) throws -> String {
+        let obj = context.mapValues { $0.rawValue }
+        let data = try JSONSerialization.data(withJSONObject: obj, options: [])
+        return String(decoding: data, as: UTF8.self)
     }
 }
 

@@ -11,7 +11,7 @@ public enum LogLevel: Int, Codable, CaseIterable, Sendable {
 public typealias LogHandler = @Sendable (_ level: LogLevel, _ message: String, _ details: [String: String]) -> Void
 
 public final class Logger: @unchecked Sendable {
-    public static let defaultLevel: LogLevel = .warn
+    public static let defaultLevel: LogLevel = .info
 
     private var level: LogLevel
     private let handler: LogHandler?

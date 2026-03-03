@@ -44,6 +44,13 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     let expected = condition.value
 
     switch op {
+    case "before", "after":
+        guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
+        guard let leftDate = ISO8601DateFormatter().date(from: current) ?? DateFormatter.featurevisorFallback.date(from: current),
+              let rightDate = ISO8601DateFormatter().date(from: target) ?? DateFormatter.featurevisorFallback.date(from: target) else {
+            return false
+        }
+        return op == "before" ? leftDate < rightDate : leftDate > rightDate
     case "equals":
         guard let attr, let expected else { return false }
         return anyValueEquals(attr, expected)
@@ -64,6 +71,12 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
         if case .array(let values) = attr { return !values.contains(where: { anyValueEquals($0, expected) }) }
         if case .string(let value) = attr, case .string(let substring) = expected { return !value.contains(substring) }
         return false
+    case "in":
+        guard let attr, let expected, case .array(let expectedValues) = expected else { return false }
+        return expectedValues.contains(where: { anyValueEquals($0, attr) })
+    case "notIn":
+        guard let attr, let expected, case .array(let expectedValues) = expected else { return false }
+        return !expectedValues.contains(where: { anyValueEquals($0, attr) })
     case "startsWith":
         guard case .string(let string)? = attr, case .string(let prefix)? = expected else { return false }
         return string.hasPrefix(prefix)
@@ -97,9 +110,17 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     case "semverGreaterThan":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
         return compareVersions(current, target) == .greaterThan
+    case "semverGreaterThanOrEquals":
+        guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
+        let result = compareVersions(current, target)
+        return result == .greaterThan || result == .equal
     case "semverLessThan":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
         return compareVersions(current, target) == .lessThan
+    case "semverLessThanOrEquals":
+        guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
+        let result = compareVersions(current, target)
+        return result == .lessThan || result == .equal
     case "matches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
         do {
@@ -109,9 +130,28 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
         } catch {
             return false
         }
+    case "notMatches":
+        guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
+        do {
+            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            let range = NSRange(location: 0, length: current.utf16.count)
+            return regex.firstMatch(in: current, options: [], range: range) == nil
+        } catch {
+            return false
+        }
     default:
         return false
     }
+}
+
+private extension DateFormatter {
+    static let featurevisorFallback: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
 }
 
 public func allConditionsMatched(_ condition: Condition, context: Context) -> Bool {

@@ -323,7 +323,7 @@ Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
 
 ## Logging
 
-By default, Featurevisor SDK logs from `warn` level and above.
+By default, Featurevisor SDK logs from `info` level and above.
 
 ### Levels
 

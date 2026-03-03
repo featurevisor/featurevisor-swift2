@@ -37,7 +37,14 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
 
     @discardableResult
     public func on(_ eventName: EventName, callback: @escaping EventCallback) -> () -> Void {
-        emitter.on(eventName, callback: callback)
+        if eventName == .contextSet || eventName == .stickySet {
+            return emitter.on(eventName, callback: callback)
+        }
+        return parent.on(eventName, callback: callback)
+    }
+
+    public func close() {
+        emitter.clearAll()
     }
 
     private func merge(_ options: OverrideOptions) -> OverrideOptions {
@@ -98,5 +105,9 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
 
     public func getVariableJSON(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> AnyValue? {
         parent.getVariableJSON(featureKey, variableKey, getContext(context), merge(options))
+    }
+
+    public func getAllEvaluations(_ context: Context = [:], _ featureKeys: [FeatureKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedFeatures {
+        parent.getAllEvaluations(getContext(context), featureKeys, merge(options))
     }
 }

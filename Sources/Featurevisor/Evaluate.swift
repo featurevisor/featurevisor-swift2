@@ -77,10 +77,6 @@ public func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let datafileReader = options.dependencies.datafileReader
     let hooksManager = options.dependencies.hooksManager
 
-    guard let feature = datafileReader.getFeature(featureKey) else {
-        return Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
-    }
-
     if let sticky = options.dependencies.sticky?[featureKey] {
         var stickyEvaluation = Evaluation(type: type, featureKey: featureKey, reason: .sticky)
         stickyEvaluation.sticky = sticky
@@ -91,6 +87,10 @@ public func evaluate(_ options: EvaluateOptions) -> Evaluation {
             stickyEvaluation.variableValue = sticky.variables?[variableKey]
         }
         return stickyEvaluation
+    }
+
+    guard let feature = datafileReader.getFeature(featureKey) else {
+        return Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
     }
 
     let matchedForce = datafileReader.getMatchedForce(feature, context: context)
