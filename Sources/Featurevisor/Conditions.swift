@@ -132,7 +132,7 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     case "matches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
         do {
-            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(condition.regexFlags))
             let range = NSRange(location: 0, length: current.utf16.count)
             return regex.firstMatch(in: current, options: [], range: range) != nil
         } catch {
@@ -141,7 +141,7 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     case "notMatches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
         do {
-            let regex = try NSRegularExpression(pattern: pattern, options: [])
+            let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(condition.regexFlags))
             let range = NSRange(location: 0, length: current.utf16.count)
             return regex.firstMatch(in: current, options: [], range: range) == nil
         } catch {
@@ -150,6 +150,16 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     default:
         return false
     }
+}
+
+private func regexOptions(_ flags: String?) -> NSRegularExpression.Options {
+    guard let flags else { return [] }
+    var options: NSRegularExpression.Options = []
+    if flags.contains("i") { options.insert(.caseInsensitive) }
+    if flags.contains("m") { options.insert(.anchorsMatchLines) }
+    if flags.contains("s") { options.insert(.dotMatchesLineSeparators) }
+    if flags.contains("x") { options.insert(.allowCommentsAndWhitespace) }
+    return options
 }
 
 private extension DateFormatter {

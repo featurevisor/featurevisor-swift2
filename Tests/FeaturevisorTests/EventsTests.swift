@@ -9,14 +9,14 @@ final class EventsTests: XCTestCase {
             replace: false
         )
 
-        XCTAssertEqual(params["replaced"], "false")
-        XCTAssertEqual(params["features"], "a,b")
+        XCTAssertEqual(params["replaced"], .bool(false))
+        XCTAssertEqual(params["features"], .array([.string("a"), .string("b")]))
     }
 
     func testDatafileEventParams() {
         let logger = createLogger(level: .fatal)
 
-        var d1 = TestFixtures.basicDatafile()
+        let d1 = TestFixtures.basicDatafile()
         var d2 = TestFixtures.basicDatafile()
         d2.revision = "2"
         d2.features["test"]?.hash = "h2"
@@ -25,9 +25,9 @@ final class EventsTests: XCTestCase {
         let n = DatafileReader(datafile: d2, logger: logger)
 
         let params = getParamsForDatafileSetEvent(previousDatafileReader: p, newDatafileReader: n)
-        XCTAssertEqual(params["revision"], "2")
-        XCTAssertEqual(params["previousRevision"], "1")
-        XCTAssertEqual(params["revisionChanged"], "true")
-        XCTAssertEqual(params["features"], "test")
+        XCTAssertEqual(params["revision"], .string("2"))
+        XCTAssertEqual(params["previousRevision"], .string("1"))
+        XCTAssertEqual(params["revisionChanged"], .bool(true))
+        XCTAssertEqual(params["features"], .array([.string("test")]))
     }
 }

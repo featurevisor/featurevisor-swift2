@@ -245,6 +245,12 @@ struct TestCommand {
                 continue
             }
 
+            if options.showDatafile, let text = try? datafile.toJSON(pretty: true) {
+                print("")
+                print(text)
+                print("")
+            }
+
             let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
 
             var contextMap: [String: Any] = [:]

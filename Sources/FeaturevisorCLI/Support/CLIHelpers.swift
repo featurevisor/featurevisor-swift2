@@ -6,7 +6,7 @@ enum CLIHelpers {
 
     static func loggerLevel(_ options: CLIOptions) -> LogLevel {
         if options.verbose { return .debug }
-        if options.quiet { return .error }
+        if options.quiet { return .fatal }
         return .warn
     }
 
@@ -179,10 +179,12 @@ enum CLIHelpers {
         case (nil, let rhs?):
             return rhs is NSNull
         case (let lhs?, nil):
-            if let lhs = lhs as? NSNull { return lhs is NSNull }
+            if lhs is NSNull { return true }
             return false
         case (let lhs as NSNull, let rhs as NSNull):
-            return lhs is NSNull && rhs is NSNull
+            _ = lhs
+            _ = rhs
+            return true
         case (let lhs as NSNumber, let rhs as NSNumber):
             if isBool(lhs) || isBool(rhs) {
                 return lhs.boolValue == rhs.boolValue

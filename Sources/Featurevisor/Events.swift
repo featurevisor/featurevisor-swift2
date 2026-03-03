@@ -4,21 +4,21 @@ public func getParamsForStickySetEvent(
     previousStickyFeatures: StickyFeatures = [:],
     newStickyFeatures: StickyFeatures = [:],
     replace: Bool
-) -> [String: String] {
+) -> [String: AnyValue] {
     let keysBefore = Set(previousStickyFeatures.keys)
     let keysAfter = Set(newStickyFeatures.keys)
     let allKeys = keysBefore.union(keysAfter)
 
     return [
-        "features": allKeys.sorted().joined(separator: ","),
-        "replaced": replace ? "true" : "false",
+        "features": .array(allKeys.sorted().map { .string($0) }),
+        "replaced": .bool(replace),
     ]
 }
 
 public func getParamsForDatafileSetEvent(
     previousDatafileReader: DatafileReader,
     newDatafileReader: DatafileReader
-) -> [String: String] {
+) -> [String: AnyValue] {
     let previousRevision = previousDatafileReader.getRevision()
     let previousFeatureKeys = Set(previousDatafileReader.getFeatureKeys())
 
@@ -37,12 +37,12 @@ public func getParamsForDatafileSetEvent(
         }
     }
 
-    let affected = removed.union(added).union(changed).sorted().joined(separator: ",")
+    let affected = removed.union(added).union(changed).sorted()
 
     return [
-        "revision": newRevision,
-        "previousRevision": previousRevision,
-        "revisionChanged": previousRevision == newRevision ? "false" : "true",
-        "features": affected,
+        "revision": .string(newRevision),
+        "previousRevision": .string(previousRevision),
+        "revisionChanged": .bool(previousRevision != newRevision),
+        "features": .array(affected.map { .string($0) }),
     ]
 }

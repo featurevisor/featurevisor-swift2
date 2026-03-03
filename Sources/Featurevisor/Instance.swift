@@ -98,8 +98,8 @@ public final class FeaturevisorInstance: @unchecked Sendable {
             self.context = self.context.merging(context, uniquingKeysWith: { _, new in new })
         }
         emitter.trigger(.contextSet, payload: EventPayload([
-            "context": (try? JSONSerialization.string(from: self.context)) ?? "{}",
-            "replaced": replace ? "true" : "false",
+            "context": .object(self.context),
+            "replaced": .bool(replace),
         ]))
     }
 
@@ -198,14 +198,6 @@ public final class FeaturevisorInstance: @unchecked Sendable {
             result[key] = EvaluatedFeature(enabled: enabled, variation: variation, variables: variables.isEmpty ? nil : variables)
         }
         return result
-    }
-}
-
-private extension JSONSerialization {
-    static func string(from context: Context) throws -> String {
-        let obj = context.mapValues { $0.rawValue }
-        let data = try JSONSerialization.data(withJSONObject: obj, options: [])
-        return String(decoding: data, as: UTF8.self)
     }
 }
 

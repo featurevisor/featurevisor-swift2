@@ -7,8 +7,8 @@ public enum EventName: String, Sendable {
 }
 
 public struct EventPayload: Sendable {
-    public var params: [String: String]
-    public init(_ params: [String: String] = [:]) { self.params = params }
+    public var params: [String: AnyValue]
+    public init(_ params: [String: AnyValue] = [:]) { self.params = params }
 }
 
 public typealias EventCallback = @Sendable (_ payload: EventPayload) -> Void

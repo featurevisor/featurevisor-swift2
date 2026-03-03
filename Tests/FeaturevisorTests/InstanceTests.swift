@@ -21,10 +21,10 @@ final class InstanceTests: XCTestCase {
         let contextEvent = ConcurrencyBox(false)
         let stickyEvent = ConcurrencyBox(false)
         let u1 = sdk.on(.contextSet) { payload in
-            contextEvent.value = payload.params["replaced"] == "false"
+            contextEvent.value = payload.params["replaced"] == .bool(false)
         }
         let u2 = sdk.on(.stickySet) { payload in
-            stickyEvent.value = payload.params["features"] == "test"
+            stickyEvent.value = payload.params["features"] == .array([.string("test")])
         }
 
         sdk.setContext(["country": .string("nl")])

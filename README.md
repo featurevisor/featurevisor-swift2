@@ -28,6 +28,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 proje
 - [Logging](#logging)
   - [Levels](#levels)
   - [Customizing levels](#customizing-levels)
+  - [Handler](#handler)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
@@ -43,7 +44,6 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 proje
   - [Benchmark](#benchmark)
   - [Assess distribution](#assess-distribution)
 - [Development of this package](#development-of-this-package)
-  - [Setting up](#setting-up)
   - [Running tests](#running-tests)
 - [License](#license)
 
@@ -353,6 +353,23 @@ Or set it afterwards:
 f.setLogLevel(.debug)
 ```
 
+### Handler
+
+If you want to fully control log output, pass a custom logger:
+
+```swift
+let logger = createLogger(level: .debug) { level, message, details in
+    print("[\(level)] \(message) \(details)")
+}
+
+let f = createInstance(
+    InstanceOptions(
+        datafile: datafileContent,
+        logger: logger
+    )
+)
+```
+
 ## Events
 
 Featurevisor SDK implements a simple event emitter that allows you to listen to runtime events.
@@ -493,14 +510,6 @@ swift run featurevisor assess-distribution \
 <!-- FEATUREVISOR_DOCS_END -->
 
 ## Development of this package
-
-### Setting up
-
-This repo includes `monorepo/` and `featurevisor-go/` references. To refresh:
-
-```bash
-make update-references
-```
 
 ### Running tests
 

@@ -1,4 +1,7 @@
-.PHONY: build test clean setup-monorepo update-monorepo setup-golang-sdk update-golang-sdk setup-references update-references
+.PHONY: install build test clean setup-monorepo update-monorepo setup-golang-sdk update-golang-sdk setup-references update-references
+
+install:
+	swift package update
 
 build:
 	swift build
