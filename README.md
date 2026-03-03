@@ -490,6 +490,8 @@ swift run featurevisor assess-distribution \
   --n=1000
 ```
 
+<!-- FEATUREVISOR_DOCS_END -->
+
 ## Development of this package
 
 ### Setting up
@@ -508,4 +510,4 @@ swift test
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT © [Fahad Heylaal](https://fahad19.com)

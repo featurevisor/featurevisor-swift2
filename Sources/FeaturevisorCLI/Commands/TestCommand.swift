@@ -8,6 +8,12 @@ private struct TestSummary {
     var failedAssertions = 0
 }
 
+private struct AssertionReport {
+    let description: String
+    let passed: Bool
+    let messages: [String]
+}
+
 struct TestCommand {
     func run(_ options: CLIOptions) -> Int32 {
         guard let config = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["config", "--json"]) as? [String: Any] else {
@@ -39,19 +45,19 @@ struct TestCommand {
                     scopesByName: scopesByName,
                     datafileCache: datafileCache
                 )
-                summary.passedTests += result.0 ? 1 : 0
-                summary.failedTests += result.0 ? 0 : 1
-                summary.passedAssertions += result.1
-                summary.failedAssertions += result.2
+                summary.passedTests += result.ok ? 1 : 0
+                summary.failedTests += result.ok ? 0 : 1
+                summary.passedAssertions += result.passed
+                summary.failedAssertions += result.failed
                 continue
             }
 
             if let segmentKey = test["segment"] as? String {
                 let result = runSegmentTest(segmentKey: segmentKey, test: test, segmentsByKey: segments, options: options)
-                summary.passedTests += result.0 ? 1 : 0
-                summary.failedTests += result.0 ? 0 : 1
-                summary.passedAssertions += result.1
-                summary.failedAssertions += result.2
+                summary.passedTests += result.ok ? 1 : 0
+                summary.failedTests += result.ok ? 0 : 1
+                summary.passedAssertions += result.passed
+                summary.failedAssertions += result.failed
                 continue
             }
         }
@@ -208,15 +214,18 @@ struct TestCommand {
         options: CLIOptions,
         scopesByName: [String: [String: Any]],
         datafileCache: [String: DatafileContent]
-    ) -> (Bool, Int, Int) {
+    ) -> (ok: Bool, passed: Int, failed: Int) {
         guard let assertions = test["assertions"] as? [[String: Any]] else {
             return (false, 0, 1)
         }
 
+        let testKey = (test["key"] as? String) ?? featureKey
         var passed = 0
         var failed = 0
+        var reports: [AssertionReport] = []
 
         for assertion in assertions {
+            let description = (assertion["description"] as? String) ?? "assertion"
             let env = assertion["environment"] as? String
             let scope = assertion["scope"] as? String
             let tag = assertion["tag"] as? String
@@ -232,6 +241,7 @@ struct TestCommand {
 
             guard let datafile = datafileCache[cacheKey] ?? datafileCache[datafileCacheKey(env)] else {
                 failed += 1
+                reports.append(AssertionReport(description: description, passed: false, messages: ["=> datafile not found for assertion"]))
                 continue
             }
 
@@ -248,11 +258,13 @@ struct TestCommand {
             sdk.setContext(context)
 
             var assertionFailed = false
+            var messages: [String] = []
 
             if let expectedEnabled = assertion["expectedToBeEnabled"] as? Bool {
                 let actual = sdk.isEnabled(featureKey, context)
                 if actual != expectedEnabled {
                     assertionFailed = true
+                    messages.append(formatMismatch(type: "flag", expected: expectedEnabled, actual: actual))
                 }
             }
 
@@ -265,7 +277,10 @@ struct TestCommand {
                 } else {
                     ok = (actual == (expectedVariation as? String))
                 }
-                if !ok { assertionFailed = true }
+                if !ok {
+                    assertionFailed = true
+                    messages.append(formatMismatch(type: "variation", expected: expectedVariation, actual: actual))
+                }
             }
 
             if let expectedVariables = assertion["expectedVariables"] as? [String: Any] {
@@ -275,6 +290,7 @@ struct TestCommand {
                     let schemaType = datafile.features[featureKey]?.variablesSchema?[variableKey]?.type
                     if !CLIHelpers.compareExpected(actual, expected: expected, schemaType: schemaType) {
                         assertionFailed = true
+                        messages.append(formatMismatch(type: "variable", expected: expected, actual: actual?.rawValue, variableKey: variableKey))
                     }
                 }
             }
@@ -286,6 +302,7 @@ struct TestCommand {
                         let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                         if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                             assertionFailed = true
+                            messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, evaluationType: "flag", evaluationKey: key))
                         }
                     }
                 }
@@ -296,6 +313,7 @@ struct TestCommand {
                         let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                         if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                             assertionFailed = true
+                            messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, evaluationType: "variation", evaluationKey: key))
                         }
                     }
                 }
@@ -311,6 +329,7 @@ struct TestCommand {
                             let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                             if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                                 assertionFailed = true
+                                messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, variableKey: variableKey, evaluationType: "variable", evaluationKey: key))
                             }
                         }
                     }
@@ -318,6 +337,7 @@ struct TestCommand {
             }
 
             if let children = assertion["children"] as? [[String: Any]] {
+                var childIndex = 0
                 for childAssertion in children {
                     var childContextMap = contextMap
                     if let childContext = childAssertion["context"] as? [String: Any] {
@@ -330,6 +350,7 @@ struct TestCommand {
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
                        child.isEnabled(featureKey) != expectedEnabled {
                         assertionFailed = true
+                        messages.append(formatMismatch(type: "flag", expected: expectedEnabled, actual: child.isEnabled(featureKey), childIndex: childIndex))
                     }
                     if let expectedVariation = childAssertion["expectedVariation"] {
                         let actual = child.getVariation(featureKey)
@@ -339,7 +360,10 @@ struct TestCommand {
                         } else {
                             ok = (actual == (expectedVariation as? String))
                         }
-                        if !ok { assertionFailed = true }
+                        if !ok {
+                            assertionFailed = true
+                            messages.append(formatMismatch(type: "variation", expected: expectedVariation, actual: actual, childIndex: childIndex))
+                        }
                     }
                     if let expectedVariables = childAssertion["expectedVariables"] as? [String: Any] {
                         for (variableKey, expected) in expectedVariables {
@@ -347,6 +371,7 @@ struct TestCommand {
                             let schemaType = datafile.features[featureKey]?.variablesSchema?[variableKey]?.type
                             if !CLIHelpers.compareExpected(actual, expected: expected, schemaType: schemaType) {
                                 assertionFailed = true
+                                messages.append(formatMismatch(type: "variable", expected: expected, actual: actual?.rawValue, variableKey: variableKey, childIndex: childIndex))
                             }
                         }
                     }
@@ -358,6 +383,7 @@ struct TestCommand {
                                 let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                                 if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                                     assertionFailed = true
+                                    messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, childIndex: childIndex, evaluationType: "flag", evaluationKey: key))
                                 }
                             }
                         }
@@ -368,6 +394,7 @@ struct TestCommand {
                                 let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                                 if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                                     assertionFailed = true
+                                    messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, childIndex: childIndex, evaluationType: "variation", evaluationKey: key))
                                 }
                             }
                         }
@@ -383,24 +410,44 @@ struct TestCommand {
                                     let actual = CLIHelpers.evaluationFieldValue(evaluation, key: key)
                                     if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
                                         assertionFailed = true
+                                        messages.append(formatMismatch(type: "evaluation", expected: expected, actual: actual, variableKey: variableKey, childIndex: childIndex, evaluationType: "variable", evaluationKey: key))
                                     }
                                 }
                             }
                         }
                     }
+                    childIndex += 1
                 }
             }
 
             if assertionFailed {
                 failed += 1
+                reports.append(AssertionReport(description: description, passed: false, messages: messages))
             } else {
                 passed += 1
+                reports.append(AssertionReport(description: description, passed: true, messages: []))
             }
         }
 
         let ok = failed == 0
         if !options.onlyFailures || !ok {
-            print("Testing feature: \(featureKey) => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
+            print("")
+            print("Testing: \(testKey)")
+            print("  feature \"\(featureKey)\":")
+            for report in reports {
+                if report.passed {
+                    if !options.onlyFailures {
+                        print("  \u{2714} \(report.description)")
+                    }
+                    continue
+                }
+
+                print("\u{001B}[31m  \u{2718} \(report.description)\u{001B}[0m")
+                for message in report.messages {
+                    print("\u{001B}[31m    \(message)\u{001B}[0m")
+                }
+            }
+            print("  => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
         }
         return (ok, passed, failed)
     }
@@ -410,32 +457,111 @@ struct TestCommand {
         test: [String: Any],
         segmentsByKey: [String: Any],
         options: CLIOptions
-    ) -> (Bool, Int, Int) {
+    ) -> (ok: Bool, passed: Int, failed: Int) {
         guard let assertions = test["assertions"] as? [[String: Any]],
               let segment = segmentsByKey[segmentKey] as? [String: Any],
               let rawConditions = segment["conditions"] else {
             return (false, 0, 1)
         }
 
+        let testKey = (test["key"] as? String) ?? segmentKey
         let conditions = CLIHelpers.anyToCondition(rawConditions)
         var passed = 0
         var failed = 0
+        var reports: [AssertionReport] = []
 
         for assertion in assertions {
             let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
             let actual = allConditionsMatched(conditions, context: context)
             let expected = (assertion["expectedToMatch"] as? Bool) ?? false
+            let description = (assertion["description"] as? String) ?? "assertion"
             if actual == expected {
                 passed += 1
+                reports.append(AssertionReport(description: description, passed: true, messages: []))
             } else {
                 failed += 1
+                reports.append(AssertionReport(description: description, passed: false, messages: [formatMismatch(type: "segment", expected: expected, actual: actual)]))
             }
         }
 
         let ok = failed == 0
         if !options.onlyFailures || !ok {
-            print("Testing segment: \(segmentKey) => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
+            print("")
+            print("Testing: \(testKey)")
+            print("  segment \"\(segmentKey)\":")
+            for report in reports {
+                if report.passed {
+                    if !options.onlyFailures {
+                        print("  \u{2714} \(report.description)")
+                    }
+                    continue
+                }
+                print("\u{001B}[31m  \u{2718} \(report.description)\u{001B}[0m")
+                for message in report.messages {
+                    print("\u{001B}[31m    \(message)\u{001B}[0m")
+                }
+            }
+            print("  => \(ok ? "passed" : "failed") (\(passed) passed, \(failed) failed)")
         }
         return (ok, passed, failed)
+    }
+
+    private func formatMismatch(
+        type: String,
+        expected: Any?,
+        actual: Any?,
+        variableKey: String? = nil,
+        childIndex: Int? = nil,
+        evaluationType: String? = nil,
+        evaluationKey: String? = nil
+    ) -> String {
+        var section: String
+        switch type {
+        case "flag":
+            section = "expectedToBeEnabled"
+        case "variation":
+            section = "expectedVariation"
+        case "variable":
+            section = "expectedVariables"
+        case "evaluation":
+            section = "expectedEvaluations"
+        case "segment":
+            section = "expectedToMatch"
+        default:
+            section = type
+        }
+
+        if let childIndex {
+            section = "children[\(childIndex)].\(section)"
+        }
+
+        if type == "variable", let variableKey {
+            return "=> \(section).\(variableKey): expected \"\(display(expected))\", received \"\(display(actual))\""
+        }
+
+        if type == "evaluation" {
+            if let variableKey, let evaluationKey {
+                section = "\(section).variables.\(variableKey).\(evaluationKey)"
+            } else if let evaluationType, let evaluationKey {
+                section = "\(section).\(evaluationType).\(evaluationKey)"
+            }
+        }
+
+        return "=> \(section): expected \"\(display(expected))\", received \"\(display(actual))\""
+    }
+
+    private func display(_ value: Any?) -> String {
+        guard let value else { return "null" }
+        if value is NSNull { return "null" }
+        if let string = value as? String { return string }
+        if let bool = value as? Bool { return bool ? "true" : "false" }
+        if let int = value as? Int { return String(int) }
+        if let double = value as? Double { return String(double) }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return String(describing: value)
     }
 }
