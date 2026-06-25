@@ -23,6 +23,9 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
+  - [Merging by default](#merging-by-default)
+  - [Replacing](#replacing)
+  - [Loading datafiles on demand](#loading-datafiles-on-demand)
   - [Updating datafile](#updating-datafile)
   - [Interval-based update](#interval-based-update)
 - [Logging](#logging)
@@ -34,6 +37,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
   - [`sticky_set`](#sticky_set)
+  - [`error`](#error)
 - [Evaluation details](#evaluation-details)
 - [Modules](#modules)
   - [Defining a module](#defining-a-module)
@@ -304,11 +308,47 @@ You can also set using raw JSON string:
 f.setDatafile(json: jsonString)
 ```
 
-By default, `setDatafile` merges the incoming datafile into the SDK's stored datafile. Pass `replace: true` to replace the stored datafile instead:
+### Merging by default
+
+By default, `setDatafile` merges the incoming datafile with the SDK instance's existing datafile:
+
+- incoming `features` and `segments` override matching keys
+- existing `features` and `segments` that are missing from the incoming datafile are kept
+- `revision`, `schemaVersion`, and `featurevisorVersion` are taken from the incoming datafile
+
+This means you can call `setDatafile` more than once with different datafiles, and the SDK instance accumulates their features and segments together.
+
+### Replacing
+
+Pass `replace: true` to replace the stored datafile entirely:
 
 ```swift
 f.setDatafile(datafileContent, replace: true)
 f.setDatafile(json: jsonString, replace: true)
+```
+
+### Loading datafiles on demand
+
+Because merging is the default, a single SDK instance can start with a small datafile and load more datafiles later as your application needs them, instead of downloading every feature upfront.
+
+This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
+
+```swift
+let f = createInstance(InstanceOptions())
+
+func loadDatafile(target: String) {
+    let url = URL(string: "https://cdn.yoursite.com/production/featurevisor-\(target).json")!
+    if let data = try? Data(contentsOf: url),
+       let datafile = try? DatafileContent.fromData(data) {
+        // merges into whatever was loaded before
+        f.setDatafile(datafile)
+    }
+}
+
+loadDatafile(target: "products")
+
+// later, when the user reaches checkout
+loadDatafile(target: "checkout")
 ```
 
 ### Updating datafile
@@ -423,6 +463,16 @@ unsubscribe()
 ```swift
 let unsubscribe = f.on(.stickySet) { _ in
     // handle sticky updates
+}
+
+unsubscribe()
+```
+
+### `error`
+
+```swift
+let unsubscribe = f.on(.error) { payload in
+    print(payload.params["message"] ?? "")
 }
 
 unsubscribe()

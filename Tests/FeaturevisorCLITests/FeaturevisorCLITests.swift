@@ -1,4 +1,5 @@
 import XCTest
+import Featurevisor
 @testable import FeaturevisorCLI
 
 final class FeaturevisorCLITests: XCTestCase {
@@ -28,6 +29,53 @@ final class FeaturevisorCLITests: XCTestCase {
 
         XCTAssertEqual(command.targetDatafileCacheKey(nil, "checkout"), "false-target-checkout")
         XCTAssertEqual(command.targetDatafileCacheKey("production", "checkout"), "production-target-checkout")
+    }
+
+    func testTargetAssertionSelectsTargetDatafile() {
+        let command = TestCommand()
+        let cache = [
+            "production": DatafileContent(schemaVersion: "2", revision: "base", segments: [:], features: [:]),
+            "production-target-checkout": DatafileContent(schemaVersion: "2", revision: "target", segments: [:], features: [:]),
+        ]
+
+        XCTAssertEqual(
+            command.datafileCacheKeyForAssertion(
+                ["environment": "production", "target": "checkout"],
+                datafileCache: cache
+            ),
+            "production-target-checkout"
+        )
+    }
+
+    func testTargetAssertionFallsBackToBaseDatafile() {
+        let command = TestCommand()
+        let cache = [
+            "production": DatafileContent(schemaVersion: "2", revision: "base", segments: [:], features: [:]),
+        ]
+
+        XCTAssertEqual(
+            command.datafileCacheKeyForAssertion(
+                ["environment": "production", "target": "checkout"],
+                datafileCache: cache
+            ),
+            "production"
+        )
+    }
+
+    func testNoEnvironmentTargetAssertionSelectsTargetDatafile() {
+        let command = TestCommand()
+        let cache = [
+            CLIHelpers.noEnvironmentKey: DatafileContent(schemaVersion: "2", revision: "base", segments: [:], features: [:]),
+            "false-target-checkout": DatafileContent(schemaVersion: "2", revision: "target", segments: [:], features: [:]),
+        ]
+
+        XCTAssertEqual(
+            command.datafileCacheKeyForAssertion(
+                ["target": "checkout"],
+                datafileCache: cache
+            ),
+            "false-target-checkout"
+        )
     }
 
     func testDefaultCommandShowsHelp() {

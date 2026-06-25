@@ -95,6 +95,18 @@ struct TestCommand {
         return "false-target-\(target)"
     }
 
+    func datafileCacheKeyForAssertion(_ assertion: [String: Any], datafileCache: [String: DatafileContent]) -> String {
+        let env = assertion["environment"] as? String
+        let target = assertion["target"] as? String
+        if let target {
+            let targetKey = targetDatafileCacheKey(env, target)
+            if datafileCache[targetKey] != nil {
+                return targetKey
+            }
+        }
+        return datafileCacheKey(env)
+    }
+
     private func loadTargetKeys(_ options: CLIOptions) -> [String] {
         guard let targets = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["list", "--targets", "--json"]) as? [[String: Any]] else {
             return []
@@ -170,9 +182,7 @@ struct TestCommand {
         for assertion in assertions {
             let description = (assertion["description"] as? String) ?? "assertion"
             let env = assertion["environment"] as? String
-            let target = assertion["target"] as? String
-
-            let cacheKey = target.map { targetDatafileCacheKey(env, $0) } ?? datafileCacheKey(env)
+            let cacheKey = datafileCacheKeyForAssertion(assertion, datafileCache: datafileCache)
 
             guard let datafile = datafileCache[cacheKey] ?? datafileCache[datafileCacheKey(env)] else {
                 failed += 1
