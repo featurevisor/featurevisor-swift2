@@ -1,8 +1,8 @@
 # Featurevisor Swift SDK <!-- omit in toc -->
 
-This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v2.x to Swift, providing a way to evaluate feature flags, variations, and variables in your Swift applications.
+This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v3.x to Swift, providing a way to evaluate feature flags, variations, and variables in your Swift applications.
 
-This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 projects and above.
+This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects and v2 datafiles.
 
 ## Table of contents <!-- omit in toc -->
 
@@ -29,14 +29,15 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 proje
   - [Levels](#levels)
   - [Customizing levels](#customizing-levels)
   - [Handler](#handler)
+- [Diagnostics](#diagnostics)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
   - [`sticky_set`](#sticky_set)
 - [Evaluation details](#evaluation-details)
-- [Hooks](#hooks)
-  - [Defining a hook](#defining-a-hook)
-  - [Registering hooks](#registering-hooks)
+- [Modules](#modules)
+  - [Defining a module](#defining-a-module)
+  - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
 - [CLI usage](#cli-usage)
@@ -303,6 +304,13 @@ You can also set using raw JSON string:
 f.setDatafile(json: jsonString)
 ```
 
+By default, `setDatafile` merges the incoming datafile into the SDK's stored datafile. Pass `replace: true` to replace the stored datafile instead:
+
+```swift
+f.setDatafile(datafileContent, replace: true)
+f.setDatafile(json: jsonString, replace: true)
+```
+
 ### Updating datafile
 
 You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile_set) event that you can listen and react to accordingly.
@@ -370,6 +378,22 @@ let f = createInstance(
 )
 ```
 
+## Diagnostics
+
+You can observe SDK and module diagnostics with `onDiagnostic`:
+
+```swift
+let f = createInstance(
+    InstanceOptions(
+        onDiagnostic: { diagnostic in
+            print(diagnostic.level, diagnostic.code, diagnostic.message)
+        }
+    )
+)
+```
+
+Modules can also subscribe to diagnostics or report their own diagnostics from `setup` using the provided module API.
+
 ## Events
 
 Featurevisor SDK implements a simple event emitter that allows you to listen to runtime events.
@@ -414,35 +438,55 @@ let variationDetails = f.evaluateVariation("my_feature")
 let variableDetails = f.evaluateVariable("my_feature", "my_variable")
 ```
 
-## Hooks
+## Modules
 
-Hooks allow you to intercept evaluation inputs and outputs.
+Modules allow you to intercept evaluation inputs and outputs.
 
-### Defining a hook
+### Defining a module
 
 ```swift
-let hook = Hook(
-    name: "my-hook",
-    before: { input in
-        input
+let module = FeaturevisorModule(
+    name: "my-module",
+    setup: { api in
+        api.reportDiagnostic(
+            FeaturevisorDiagnostic(
+                level: .info,
+                code: "module_ready",
+                message: "Module is ready"
+            )
+        )
+    },
+    before: { options in
+        var updated = options
+        updated.dependencies.context["someAdditionalAttribute"] = .string("value")
+        return updated
+    },
+    bucketKey: { options in
+        options.bucketKey
+    },
+    bucketValue: { options in
+        options.bucketValue
     },
     after: { evaluation, _ in
         evaluation
+    },
+    close: {
+        // clean up module resources
     }
 )
 ```
 
-### Registering hooks
+### Registering modules
 
 ```swift
 let f = createInstance(
     InstanceOptions(
-        hooks: [hook]
+        modules: [module]
     )
 )
 
-let removeHook = f.addHook(hook)
-removeHook()
+let removeModule = f.addModule(module)
+removeModule?()
 ```
 
 ## Child instance
@@ -476,15 +520,6 @@ swift run featurevisor test \
   --projectDirectoryPath=/path/to/featurevisor-project
 ```
 
-With scoped and tagged datafiles:
-
-```bash
-swift run featurevisor test \
-  --projectDirectoryPath=/path/to/featurevisor-project \
-  --with-scopes \
-  --with-tags
-```
-
 ### Benchmark
 
 ```bash
@@ -515,6 +550,12 @@ swift run featurevisor assess-distribution \
 
 ```bash
 swift test
+```
+
+To verify against the local Featurevisor example-1 project:
+
+```bash
+make test-example-1
 ```
 
 ## License

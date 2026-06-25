@@ -17,7 +17,8 @@ public func getParamsForStickySetEvent(
 
 public func getParamsForDatafileSetEvent(
     previousDatafileReader: DatafileReader,
-    newDatafileReader: DatafileReader
+    newDatafileReader: DatafileReader,
+    replace: Bool
 ) -> [String: AnyValue] {
     let previousRevision = previousDatafileReader.getRevision()
     let previousFeatureKeys = Set(previousDatafileReader.getFeatureKeys())
@@ -44,5 +45,6 @@ public func getParamsForDatafileSetEvent(
         "previousRevision": .string(previousRevision),
         "revisionChanged": .bool(previousRevision != newRevision),
         "features": .array(affected.map { .string($0) }),
+        "replaced": .bool(replace),
     ]
 }

@@ -1,4 +1,4 @@
-.PHONY: install build test clean setup-monorepo update-monorepo setup-golang-sdk update-golang-sdk setup-references update-references
+.PHONY: install build test test-example-1 clean setup-monorepo update-monorepo setup-golang-sdk update-golang-sdk setup-references update-references
 
 install:
 	swift package update
@@ -8,6 +8,10 @@ build:
 
 test:
 	swift test
+
+test-example-1:
+	swift test
+	swift run featurevisor test --projectDirectoryPath=/Users/fahad/Projects/featurevisor/featurevisor/examples/example-1 --onlyFailures
 
 clean:
 	swift package clean

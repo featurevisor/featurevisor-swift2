@@ -31,7 +31,6 @@ struct AssessDistributionCommand {
         guard let datafile = CLIHelpers.buildDatafileJSON(
             projectDirectoryPath: options.projectDirectoryPath,
             environment: options.environment,
-            schemaVersion: options.schemaVersion,
             inflate: options.inflate
         ) else {
             return 1

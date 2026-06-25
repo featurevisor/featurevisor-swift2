@@ -7,6 +7,9 @@ final class FeaturevisorCLITests: XCTestCase {
             "test",
             "--keyPattern=foo",
             "--with-scopes",
+            "--with-tags",
+            "--schemaVersion=1",
+            "--schema-version=2",
             "--n=10",
             "--projectDirectoryPath=/tmp/project",
         ])
@@ -14,8 +17,17 @@ final class FeaturevisorCLITests: XCTestCase {
         XCTAssertEqual(opts.command, "test")
         XCTAssertEqual(opts.keyPattern, "foo")
         XCTAssertTrue(opts.withScopes)
+        XCTAssertTrue(opts.withTags)
+        XCTAssertEqual(opts.schemaVersion, "2")
         XCTAssertEqual(opts.n, 10)
         XCTAssertEqual(opts.projectDirectoryPath, "/tmp/project")
+    }
+
+    func testTargetDatafileCacheKey() {
+        let command = TestCommand()
+
+        XCTAssertEqual(command.targetDatafileCacheKey(nil, "checkout"), "false-target-checkout")
+        XCTAssertEqual(command.targetDatafileCacheKey("production", "checkout"), "production-target-checkout")
     }
 
     func testDefaultCommandShowsHelp() {

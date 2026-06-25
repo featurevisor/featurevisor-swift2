@@ -4,6 +4,7 @@ public enum EventName: String, Sendable {
     case datafileSet = "datafile_set"
     case contextSet = "context_set"
     case stickySet = "sticky_set"
+    case error
 }
 
 public struct EventPayload: Sendable {

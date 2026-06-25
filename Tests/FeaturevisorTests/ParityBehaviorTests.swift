@@ -128,8 +128,8 @@ final class ParityBehaviorTests: XCTestCase {
             ]
         )
 
-        let hook = Hook(name: "force-bucket", bucketValue: { _ in 50_000 })
-        let sdk = createInstance(InstanceOptions(datafile: datafile, hooks: [hook]))
+        let module = FeaturevisorModule(name: "force-bucket", bucketValue: { _ in 50_000 })
+        let sdk = createInstance(InstanceOptions(datafile: datafile, modules: [module]))
 
         let evaluation = sdk.evaluateFlag("exp", context: ["userId": .string("1")])
         XCTAssertEqual(evaluation.reason, .outOfRange)
@@ -167,4 +167,3 @@ final class ParityBehaviorTests: XCTestCase {
         XCTAssertEqual(sdk.getVariable("disabled", "b", ["userId": .string("1")]), .string("B-disabled"))
     }
 }
-

@@ -58,14 +58,13 @@ enum CLIHelpers {
         return try? JSONSerialization.jsonObject(with: data)
     }
 
-    static func buildDatafileJSON(projectDirectoryPath: String, environment: String?, schemaVersion: String, inflate: Int, tag: String? = nil) -> DatafileContent? {
+    static func buildDatafileJSON(projectDirectoryPath: String, environment: String?, inflate: Int, target: String? = nil) -> DatafileContent? {
         var args = ["build"]
         if let environment, !environment.isEmpty {
             args.append("--environment=\(environment)")
         }
-        if !schemaVersion.isEmpty { args.append("--schema-version=\(schemaVersion)") }
         if inflate > 0 { args.append("--inflate=\(inflate)") }
-        if let tag { args.append("--tag=\(tag)") }
+        if let target { args.append("--target=\(target)") }
         args.append("--json")
 
         let result = FeaturevisorProcess.run(projectDirectoryPath: projectDirectoryPath, args: args)

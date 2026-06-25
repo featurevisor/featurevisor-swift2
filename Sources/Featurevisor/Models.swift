@@ -13,17 +13,20 @@ public typealias EvaluatedFeatures = [FeatureKey: EvaluatedFeature]
 public struct DatafileContent: Codable, Equatable, Sendable {
     public var schemaVersion: String
     public var revision: String
+    public var featurevisorVersion: String?
     public var segments: [SegmentKey: Segment]
     public var features: [FeatureKey: Feature]
 
     public init(
         schemaVersion: String,
         revision: String,
+        featurevisorVersion: String? = nil,
         segments: [SegmentKey: Segment],
         features: [FeatureKey: Feature]
     ) {
         self.schemaVersion = schemaVersion
         self.revision = revision
+        self.featurevisorVersion = featurevisorVersion
         self.segments = segments
         self.features = features
     }

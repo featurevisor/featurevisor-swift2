@@ -24,10 +24,11 @@ final class EventsTests: XCTestCase {
         let p = DatafileReader(datafile: d1, logger: logger)
         let n = DatafileReader(datafile: d2, logger: logger)
 
-        let params = getParamsForDatafileSetEvent(previousDatafileReader: p, newDatafileReader: n)
+        let params = getParamsForDatafileSetEvent(previousDatafileReader: p, newDatafileReader: n, replace: true)
         XCTAssertEqual(params["revision"], .string("2"))
         XCTAssertEqual(params["previousRevision"], .string("1"))
         XCTAssertEqual(params["revisionChanged"], .bool(true))
         XCTAssertEqual(params["features"], .array([.string("test")]))
+        XCTAssertEqual(params["replaced"], .bool(true))
     }
 }
