@@ -13,4 +13,23 @@ final class EmitterTests: XCTestCase {
 
         XCTAssertEqual(count.value, 1)
     }
+
+    func testTriggerUsesListenerSnapshot() {
+        let emitter = Emitter()
+        let calls = ConcurrencyBox<[String]>([])
+        let unsubscribeSecond = ConcurrencyBox<(() -> Void)?>(nil)
+
+        _ = emitter.on(.stickySet) { _ in
+            calls.value.append("first")
+            unsubscribeSecond.value?()
+        }
+        unsubscribeSecond.value = emitter.on(.stickySet) { _ in
+            calls.value.append("second")
+        }
+
+        emitter.trigger(.stickySet)
+        emitter.trigger(.stickySet)
+
+        XCTAssertEqual(calls.value, ["first", "second", "first"])
+    }
 }

@@ -61,7 +61,7 @@ public struct FeaturevisorModule: Sendable {
     public var bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)?
     public var bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)?
     public var after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)?
-    public var close: (@Sendable () -> Void)?
+    public var close: (@Sendable () throws -> Void)?
 
     public init(
         name: String? = nil,
@@ -70,7 +70,7 @@ public struct FeaturevisorModule: Sendable {
         bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)? = nil,
         bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)? = nil,
         after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)? = nil,
-        close: (@Sendable () -> Void)? = nil
+        close: (@Sendable () throws -> Void)? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -123,8 +123,13 @@ public final class ModulesManager: @unchecked Sendable {
         modules.append(module)
 
         return { [weak self] in
-            self?.modules.removeAll(where: { $0.id == module.id })
-            self?.clearModuleDiagnosticSubscriptions(module)
+            guard let self else { return }
+            let existed = self.modules.contains(where: { $0.id == module.id })
+            self.modules.removeAll(where: { $0.id == module.id })
+            self.clearModuleDiagnosticSubscriptions(module)
+            if existed {
+                self.closeModule(module)
+            }
         }
     }
 
@@ -133,6 +138,7 @@ public final class ModulesManager: @unchecked Sendable {
         modules.removeAll(where: { $0.name == name })
         for module in removed {
             clearModuleDiagnosticSubscriptions(module)
+            closeModule(module)
         }
     }
 
@@ -146,7 +152,24 @@ public final class ModulesManager: @unchecked Sendable {
 
         for module in existing {
             clearModuleDiagnosticSubscriptions(module)
-            module.close?()
+            closeModule(module)
+        }
+    }
+
+    private func closeModule(_ module: FeaturevisorModule) {
+        do {
+            try module.close?()
+        } catch {
+            reportDiagnostic(
+                FeaturevisorDiagnostic(
+                    level: .error,
+                    code: "module_close_error",
+                    message: "Module close failed",
+                    moduleName: module.name,
+                    originalError: String(describing: error)
+                ),
+                nil
+            )
         }
     }
 }

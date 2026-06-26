@@ -31,4 +31,21 @@ final class ConditionsTests: XCTestCase {
         let after = Condition.predicate(.init(attribute: "date", operator: "after", value: .string("2024-01-01T00:00:00Z")))
         XCTAssertTrue(allConditionsMatched(after, context: ["date": .string("2024-01-02T00:00:00Z")]))
     }
+
+    func testNotNegatesImplicitAnd() {
+        let countryUS = Condition.predicate(.init(attribute: "country", operator: "equals", value: .string("us")))
+        let mobile = Condition.predicate(.init(attribute: "device", operator: "equals", value: .string("mobile")))
+
+        XCTAssertFalse(allConditionsMatched(.not([countryUS, mobile]), context: ["country": .string("us"), "device": .string("mobile")]))
+        XCTAssertTrue(allConditionsMatched(.not([countryUS, mobile]), context: ["country": .string("us"), "device": .string("desktop")]))
+        XCTAssertFalse(allConditionsMatched(.not([]), context: [:]))
+    }
+
+    func testNotWithNestedOrMeansNoneMatch() {
+        let countryUS = Condition.predicate(.init(attribute: "country", operator: "equals", value: .string("us")))
+        let countryNL = Condition.predicate(.init(attribute: "country", operator: "equals", value: .string("nl")))
+
+        XCTAssertFalse(allConditionsMatched(.not([.or([countryUS, countryNL])]), context: ["country": .string("us")]))
+        XCTAssertTrue(allConditionsMatched(.not([.or([countryUS, countryNL])]), context: ["country": .string("de")]))
+    }
 }

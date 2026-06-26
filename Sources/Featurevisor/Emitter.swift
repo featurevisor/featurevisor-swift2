@@ -15,24 +15,28 @@ public struct EventPayload: Sendable {
 public typealias EventCallback = @Sendable (_ payload: EventPayload) -> Void
 
 public final class Emitter: @unchecked Sendable {
-    private var listeners: [EventName: [UUID: EventCallback]] = [:]
+    private struct Listener {
+        let id: UUID
+        let callback: EventCallback
+    }
+
+    private var listeners: [EventName: [Listener]] = [:]
 
     public init() {}
 
     @discardableResult
     public func on(_ eventName: EventName, callback: @escaping EventCallback) -> () -> Void {
         let id = UUID()
-        listeners[eventName, default: [:]][id] = callback
+        listeners[eventName, default: []].append(Listener(id: id, callback: callback))
         return { [weak self] in
-            self?.listeners[eventName]?[id] = nil
+            self?.listeners[eventName]?.removeAll(where: { $0.id == id })
         }
     }
 
     public func trigger(_ eventName: EventName, payload: EventPayload = EventPayload()) {
-        if let callbacks = listeners[eventName]?.values {
-            for callback in callbacks {
-                callback(payload)
-            }
+        let callbacks = listeners[eventName]?.map { $0.callback } ?? []
+        for callback in callbacks {
+            callback(payload)
         }
     }
 

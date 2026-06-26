@@ -2,6 +2,10 @@ import XCTest
 @testable import Featurevisor
 
 final class ModulesTests: XCTestCase {
+    enum TestModuleError: Error {
+        case closeFailed
+    }
+
     func testModuleSetupDiagnosticsAddRemoveAndClose() {
         let setupCalled = ConcurrencyBox(false)
         let closeCalled = ConcurrencyBox(false)
@@ -49,6 +53,99 @@ final class ModulesTests: XCTestCase {
 
         sdk.close()
         XCTAssertTrue(closeCalled.value)
+    }
+
+    func testRemovedModulesAreClosed() {
+        let closed = ConcurrencyBox<[String]>([])
+        let sdk = createInstance(InstanceOptions(logLevel: .fatal))
+
+        let unsubscribe = sdk.addModule(FeaturevisorModule(
+            name: "dynamic",
+            close: {
+                closed.value.append("dynamic")
+            }
+        ))
+
+        XCTAssertNotNil(unsubscribe)
+        unsubscribe?()
+        unsubscribe?()
+
+        _ = sdk.addModule(FeaturevisorModule(
+            name: "dynamic",
+            close: {
+                closed.value.append("dynamic-again")
+            }
+        ))
+        sdk.removeModule("dynamic")
+
+        XCTAssertEqual(closed.value, ["dynamic", "dynamic-again"])
+    }
+
+    func testModuleCloseErrorsAreReportedAndDoNotStopCleanup() {
+        let diagnostics = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
+        let errorEventCodes = ConcurrencyBox<[String]>([])
+        let closed = ConcurrencyBox<[String]>([])
+
+        let sdk = createInstance(InstanceOptions(
+            logLevel: .info,
+            onDiagnostic: { diagnostic in
+                diagnostics.value.append(diagnostic)
+            }
+        ))
+
+        sdk.on(.error) { payload in
+            if case .string(let code)? = payload.params["code"] {
+                errorEventCodes.value.append(code)
+            }
+        }
+
+        _ = sdk.addModule(FeaturevisorModule(
+            name: "first",
+            close: {
+                closed.value.append("first")
+                throw TestModuleError.closeFailed
+            }
+        ))
+        _ = sdk.addModule(FeaturevisorModule(
+            name: "second",
+            close: {
+                closed.value.append("second")
+            }
+        ))
+
+        sdk.close()
+
+        XCTAssertEqual(closed.value, ["first", "second"])
+        XCTAssertTrue(diagnostics.value.contains {
+            $0.code == "module_close_error" &&
+                $0.level == .error &&
+                $0.moduleName == "first" &&
+                $0.originalError?.contains("closeFailed") == true
+        })
+        XCTAssertTrue(errorEventCodes.value.contains("module_close_error"))
+    }
+
+    func testModuleUnsubscribeReportsCloseErrors() {
+        let diagnostics = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
+        let sdk = createInstance(InstanceOptions(
+            logLevel: .info,
+            onDiagnostic: { diagnostic in
+                diagnostics.value.append(diagnostic)
+            }
+        ))
+
+        let unsubscribe = sdk.addModule(FeaturevisorModule(
+            name: "dynamic",
+            close: {
+                throw TestModuleError.closeFailed
+            }
+        ))
+
+        XCTAssertNotNil(unsubscribe)
+        unsubscribe?()
+        unsubscribe?()
+
+        XCTAssertEqual(diagnostics.value.filter { $0.code == "module_close_error" && $0.moduleName == "dynamic" }.count, 1)
     }
 
     func testBeforeAfterAndBucketModules() {
