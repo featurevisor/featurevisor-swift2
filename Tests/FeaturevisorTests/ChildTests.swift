@@ -3,7 +3,7 @@ import XCTest
 
 final class ChildTests: XCTestCase {
     func testChildContextAndSticky() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile(), context: ["app": .string("ios")]))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile(), context: ["app": .string("ios")]))
         let child = sdk.spawn(["userId": .string("123")])
 
         XCTAssertEqual(child.getContext()["app"], .string("ios"))
@@ -14,7 +14,7 @@ final class ChildTests: XCTestCase {
     }
 
     func testChildDelegatesParentEventsForDatafileSet() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile()))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
         let child = sdk.spawn()
 
         let called = ConcurrencyBox(false)

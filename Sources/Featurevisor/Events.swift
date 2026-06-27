@@ -15,7 +15,7 @@ public func getParamsForStickySetEvent(
     ]
 }
 
-public func getParamsForDatafileSetEvent(
+func getParamsForDatafileSetEvent(
     previousDatafileReader: DatafileReader,
     newDatafileReader: DatafileReader,
     replace: Bool

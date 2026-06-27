@@ -4,12 +4,12 @@ public struct EvaluateDependencies: Sendable {
     public var context: Context
     public var logger: Logger
     public var modulesManager: ModulesManager
-    public var datafileReader: DatafileReader
+    var datafileReader: DatafileReader
     public var sticky: StickyFeatures?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
 
-    public init(
+    init(
         context: Context,
         logger: Logger,
         modulesManager: ModulesManager,
@@ -34,7 +34,7 @@ public struct EvaluateOptions: Sendable {
     public var variableKey: VariableKey?
     public var dependencies: EvaluateDependencies
 
-    public init(type: EvaluationType, featureKey: FeatureKey, variableKey: VariableKey? = nil, dependencies: EvaluateDependencies) {
+    init(type: EvaluationType, featureKey: FeatureKey, variableKey: VariableKey? = nil, dependencies: EvaluateDependencies) {
         self.type = type
         self.featureKey = featureKey
         self.variableKey = variableKey
@@ -42,7 +42,7 @@ public struct EvaluateOptions: Sendable {
     }
 }
 
-public func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
+func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     var updated = options
     for module in updated.dependencies.modulesManager.getAll() {
         if let before = module.before {
@@ -71,7 +71,7 @@ public func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     return evaluation
 }
 
-public func evaluate(_ options: EvaluateOptions) -> Evaluation {
+func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let type = options.type
     let featureKey = options.featureKey
     let variableKey = options.variableKey

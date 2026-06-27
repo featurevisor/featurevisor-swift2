@@ -81,7 +81,7 @@ let data = try Data(contentsOf: datafileURL)
 let datafileContent = try DatafileContent.fromData(data)
 
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         datafile: datafileContent
     )
 )
@@ -118,7 +118,7 @@ You can set context at the time of initialization:
 
 ```swift
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         context: [
             "deviceId": .string("123"),
             "country": .string("nl"),
@@ -268,7 +268,7 @@ For the lifecycle of the SDK instance in your application, you can set some feat
 
 ```swift
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         sticky: [
             "myFeatureKey": EvaluatedFeature(
                 enabled: true,
@@ -334,7 +334,7 @@ Because merging is the default, a single SDK instance can start with a small dat
 This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
 
 ```swift
-let f = createInstance(InstanceOptions())
+let f = createInstance(FeaturevisorOptions())
 
 func loadDatafile(target: String) {
     let url = URL(string: "https://cdn.yoursite.com/production/featurevisor-\(target).json")!
@@ -389,7 +389,7 @@ You can set log level at initialization:
 
 ```swift
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         logLevel: .debug
     )
 )
@@ -411,7 +411,7 @@ let logger = createLogger(level: .debug) { level, message, details in
 }
 
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         datafile: datafileContent,
         logger: logger
     )
@@ -424,7 +424,7 @@ You can observe SDK and module diagnostics with `onDiagnostic`:
 
 ```swift
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         onDiagnostic: { diagnostic in
             print(diagnostic.level, diagnostic.code, diagnostic.message)
         }
@@ -530,7 +530,7 @@ let module = FeaturevisorModule(
 
 ```swift
 let f = createInstance(
-    InstanceOptions(
+    FeaturevisorOptions(
         modules: [module]
     )
 )

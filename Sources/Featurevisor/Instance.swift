@@ -1,6 +1,6 @@
 import Foundation
 
-public struct InstanceOptions: Sendable {
+public struct FeaturevisorOptions: Sendable {
     public var datafile: DatafileContent?
     public var context: Context
     public var logLevel: LogLevel
@@ -51,7 +51,7 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     private let emitter: Emitter
     private var closed = false
 
-    public init(options: InstanceOptions) {
+    public init(options: FeaturevisorOptions) {
         self.context = options.context
         self.logger = options.logger ?? createLogger(level: options.logLevel)
         self.logLevel = options.logLevel
@@ -357,6 +357,6 @@ private func mergeStoredDatafile(existing: DatafileContent, incoming: DatafileCo
     )
 }
 
-public func createInstance(_ options: InstanceOptions = InstanceOptions()) -> FeaturevisorInstance {
+public func createInstance(_ options: FeaturevisorOptions = FeaturevisorOptions()) -> FeaturevisorInstance {
     FeaturevisorInstance(options: options)
 }

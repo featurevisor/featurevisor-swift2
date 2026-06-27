@@ -155,7 +155,7 @@ struct TestCommand {
         })
 
         return createInstance(
-            InstanceOptions(
+            FeaturevisorOptions(
                 datafile: datafile,
                 logLevel: CLIHelpers.loggerLevel(options),
                 sticky: sticky,

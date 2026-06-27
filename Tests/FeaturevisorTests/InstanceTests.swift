@@ -3,7 +3,7 @@ import XCTest
 
 final class InstanceTests: XCTestCase {
     func testLifecycleAndEvaluations() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile()))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
 
         XCTAssertEqual(sdk.getRevision(), "1")
         XCTAssertTrue(sdk.isEnabled("test", ["userId": .string("123")]))
@@ -16,7 +16,7 @@ final class InstanceTests: XCTestCase {
     }
 
     func testSetContextAndStickyEvents() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile()))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
 
         let contextEvent = ConcurrencyBox(false)
         let stickyEvent = ConcurrencyBox(false)
@@ -37,7 +37,7 @@ final class InstanceTests: XCTestCase {
     }
 
     func testSetDatafileMergesByDefaultAndReplacesWhenRequested() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile()))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
 
         let secondDatafile = DatafileContent(
             schemaVersion: "2",
@@ -72,7 +72,7 @@ final class InstanceTests: XCTestCase {
     }
 
     func testDatafileSetEventIncludesReplaced() {
-        let sdk = createInstance(InstanceOptions(datafile: TestFixtures.basicDatafile()))
+        let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
         let replaced = ConcurrencyBox<AnyValue?>(nil)
 
         let unsubscribe = sdk.on(.datafileSet) { payload in

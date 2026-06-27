@@ -50,7 +50,7 @@ struct BenchmarkCommand {
             return 1
         }
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
+        let sdk = createInstance(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
 
         print("\nRunning benchmark for feature \"\(options.feature)\"...")
         print("Against context: \(options.context.isEmpty ? "{}" : options.context)")

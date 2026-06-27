@@ -30,7 +30,7 @@ final class ModulesTests: XCTestCase {
             }
         )
 
-        let sdk = createInstance(InstanceOptions(
+        let sdk = createInstance(FeaturevisorOptions(
             datafile: TestFixtures.basicDatafile(),
             logLevel: .info,
             onDiagnostic: { diagnostic in
@@ -57,7 +57,7 @@ final class ModulesTests: XCTestCase {
 
     func testRemovedModulesAreClosed() {
         let closed = ConcurrencyBox<[String]>([])
-        let sdk = createInstance(InstanceOptions(logLevel: .fatal))
+        let sdk = createInstance(FeaturevisorOptions(logLevel: .fatal))
 
         let unsubscribe = sdk.addModule(FeaturevisorModule(
             name: "dynamic",
@@ -86,7 +86,7 @@ final class ModulesTests: XCTestCase {
         let errorEventCodes = ConcurrencyBox<[String]>([])
         let closed = ConcurrencyBox<[String]>([])
 
-        let sdk = createInstance(InstanceOptions(
+        let sdk = createInstance(FeaturevisorOptions(
             logLevel: .info,
             onDiagnostic: { diagnostic in
                 diagnostics.value.append(diagnostic)
@@ -127,7 +127,7 @@ final class ModulesTests: XCTestCase {
 
     func testModuleUnsubscribeReportsCloseErrors() {
         let diagnostics = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
-        let sdk = createInstance(InstanceOptions(
+        let sdk = createInstance(FeaturevisorOptions(
             logLevel: .info,
             onDiagnostic: { diagnostic in
                 diagnostics.value.append(diagnostic)
@@ -193,7 +193,7 @@ final class ModulesTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile, modules: [module]))
+        let sdk = createInstance(FeaturevisorOptions(datafile: datafile, modules: [module]))
         let evaluation = sdk.evaluateFlag("exp")
 
         XCTAssertEqual(bucketKeySeen.value, "from-before.exp")
