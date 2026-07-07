@@ -13,20 +13,40 @@ enum FeaturevisorProcess {
         process.arguments = ["npx", "featurevisor"] + args
         process.currentDirectoryURL = URL(fileURLWithPath: projectDirectoryPath)
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        let temporaryDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let stdoutURL = temporaryDirectory.appendingPathComponent("featurevisor-swift-stdout-\(UUID().uuidString)")
+        let stderrURL = temporaryDirectory.appendingPathComponent("featurevisor-swift-stderr-\(UUID().uuidString)")
+
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+
+        guard let stdoutHandle = try? FileHandle(forWritingTo: stdoutURL),
+              let stderrHandle = try? FileHandle(forWritingTo: stderrURL) else {
+            return ProcessResult(code: 1, stdout: "", stderr: "Could not create temporary process output files")
+        }
+
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
 
         do {
             try process.run()
             process.waitUntilExit()
         } catch {
+            try? stdoutHandle.close()
+            try? stderrHandle.close()
+            try? FileManager.default.removeItem(at: stdoutURL)
+            try? FileManager.default.removeItem(at: stderrURL)
             return ProcessResult(code: 1, stdout: "", stderr: error.localizedDescription)
         }
 
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
+
+        let outData = (try? Data(contentsOf: stdoutURL)) ?? Data()
+        let errData = (try? Data(contentsOf: stderrURL)) ?? Data()
+
+        try? FileManager.default.removeItem(at: stdoutURL)
+        try? FileManager.default.removeItem(at: stderrURL)
 
         return ProcessResult(
             code: process.terminationStatus,
