@@ -247,6 +247,15 @@ public final class FeaturevisorInstance: @unchecked Sendable {
             "context": .object(self.context),
             "replaced": .bool(replace),
         ]))
+        reportDiagnostic(FeaturevisorDiagnostic(
+            level: .debug,
+            code: "context_set",
+            message: replace ? "Context replaced" : "Context updated",
+            details: [
+                "context": .object(self.context),
+                "replaced": .bool(replace),
+            ]
+        ))
     }
 
     public func getContext(_ context: Context? = nil) -> Context {

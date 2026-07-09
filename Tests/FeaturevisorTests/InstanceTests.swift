@@ -36,6 +36,24 @@ final class InstanceTests: XCTestCase {
         XCTAssertTrue(stickyEvent.value)
     }
 
+    func testLifecycleMutationsReportDiagnostics() {
+        let diagnostics = ConcurrencyBox<[String]>([])
+        let sdk = createInstance(FeaturevisorOptions(
+            logLevel: .debug,
+            onDiagnostic: { diagnostic in
+                diagnostics.value.append(diagnostic.code)
+            }
+        ))
+
+        sdk.setDatafile(TestFixtures.basicDatafile())
+        sdk.setSticky(["test": EvaluatedFeature(enabled: true)])
+        sdk.setContext(["country": .string("nl")])
+
+        XCTAssertTrue(diagnostics.value.contains("datafile_set"))
+        XCTAssertTrue(diagnostics.value.contains("sticky_set"))
+        XCTAssertTrue(diagnostics.value.contains("context_set"))
+    }
+
     func testSetDatafileMergesByDefaultAndReplacesWhenRequested() {
         let sdk = createInstance(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
 
