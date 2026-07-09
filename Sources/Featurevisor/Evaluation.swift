@@ -56,17 +56,26 @@ public struct Evaluation: Codable, Sendable {
 }
 
 public struct OverrideOptions: Sendable {
-    public var sticky: StickyFeatures?
+    // Instance-internal transport for child sticky state. Sticky values are
+    // configured on an instance, never supplied for an individual evaluation.
+    var sticky: StickyFeatures?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
 
     public init(
-        sticky: StickyFeatures? = nil,
         defaultVariationValue: VariationValue? = nil,
         defaultVariableValue: VariableValue? = nil
     ) {
-        self.sticky = sticky
+        self.sticky = nil
         self.defaultVariationValue = defaultVariationValue
         self.defaultVariableValue = defaultVariableValue
+    }
+}
+
+public struct SpawnOptions: Sendable {
+    public var sticky: StickyFeatures?
+
+    public init(sticky: StickyFeatures? = nil) {
+        self.sticky = sticky
     }
 }

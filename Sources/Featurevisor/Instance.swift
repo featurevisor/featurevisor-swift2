@@ -263,7 +263,7 @@ public final class FeaturevisorInstance: @unchecked Sendable {
         return self.context.merging(context, uniquingKeysWith: { _, new in new })
     }
 
-    public func spawn(_ context: Context = [:], options: OverrideOptions = OverrideOptions()) -> FeaturevisorChildInstance {
+    public func spawn(_ context: Context = [:], options: SpawnOptions = SpawnOptions()) -> FeaturevisorChildInstance {
         FeaturevisorChildInstance(parent: self, context: getContext(context), sticky: options.sticky)
     }
 
@@ -273,7 +273,7 @@ public final class FeaturevisorInstance: @unchecked Sendable {
             logger: logger,
             modulesManager: modulesManager,
             datafileReader: datafileReader,
-            sticky: options.sticky == nil ? sticky : (sticky ?? [:]).merging(options.sticky ?? [:], uniquingKeysWith: { _, new in new }),
+            sticky: options.sticky ?? sticky,
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )

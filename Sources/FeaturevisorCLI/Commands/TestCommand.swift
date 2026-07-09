@@ -293,7 +293,7 @@ struct TestCommand {
                     }
                     let childContext = CLIHelpers.parseContext(childContextMap)
                     let childSticky = CLIHelpers.anyToSticky(assertion["sticky"])
-                    let child = sdk.spawn(childContext, options: OverrideOptions(sticky: childSticky))
+                    let child = sdk.spawn(childContext, options: SpawnOptions(sticky: childSticky))
 
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
                        child.isEnabled(featureKey) != expectedEnabled {

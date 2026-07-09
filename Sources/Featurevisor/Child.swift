@@ -48,11 +48,12 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     }
 
     private func merge(_ options: OverrideOptions) -> OverrideOptions {
-        OverrideOptions(
-            sticky: options.sticky == nil ? sticky : (sticky ?? [:]).merging(options.sticky ?? [:], uniquingKeysWith: { _, new in new }),
+        var merged = OverrideOptions(
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )
+        merged.sticky = sticky
+        return merged
     }
 
     public func evaluateFlag(_ featureKey: FeatureKey, context: Context = [:], options: OverrideOptions = OverrideOptions()) -> Evaluation {
