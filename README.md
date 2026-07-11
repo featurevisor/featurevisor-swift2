@@ -249,6 +249,8 @@ f.getVariableObject(featureKey, variableKey, context)
 f.getVariableJSON(featureKey, variableKey, context)
 ```
 
+Type specific methods do not coerce strings or booleans into numbers. They return `nil` when the value does not match the requested type.
+
 ## Getting all evaluations
 
 You can get evaluations of all features available in the SDK instance:

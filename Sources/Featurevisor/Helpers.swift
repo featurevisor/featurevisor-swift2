@@ -7,18 +7,17 @@ public func getValueByType(_ value: AnyValue?, fieldType: String) -> AnyValue? {
     case "string":
         return value.asString().map(AnyValue.string)
     case "integer":
-        if let int = value.asInt() { return .int(int) }
-        if case .string(let str) = value {
-            if let parsed = Int(str) { return .int(parsed) }
-            if let asDouble = Double(str) { return .int(Int(asDouble)) }
+        if case .int(let int) = value { return .int(int) }
+        if case .double(let double) = value, double.isFinite, double.rounded(.towardZero) == double {
+            return .int(Int(double))
         }
         return nil
     case "double":
-        if let double = value.asDouble() { return .double(double) }
-        if case .string(let str) = value, let parsed = Double(str) { return .double(parsed) }
+        if case .double(let double) = value, double.isFinite { return .double(double) }
+        if case .int(let int) = value { return .double(Double(int)) }
         return nil
     case "boolean":
-        return .bool(value.asBool() == true)
+        return value.asBool().map(AnyValue.bool)
     case "array":
         return value.asArray().map(AnyValue.array)
     case "object":

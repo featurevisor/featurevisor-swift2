@@ -2,6 +2,34 @@ import XCTest
 @testable import Featurevisor
 
 final class DatafileReaderTests: XCTestCase {
+    func testSharedV3ConformanceFixture() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "conformance/sdk-v3.json"))
+        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertEqual(fixture["version"] as? Int, 1)
+
+        let bucketing = fixture["bucketing"] as! [String: Any]
+        let expected = bucketing["allocationExpectations"] as! [String: String]
+        let reader = DatafileReader(datafile: TestFixtures.basicDatafile(), logger: createLogger(level: .fatal))
+        let traffic = Traffic(
+            key: "all",
+            segments: .all,
+            percentage: 100000,
+            enabled: nil,
+            variation: nil,
+            variables: nil,
+            variationWeights: nil,
+            variableOverrides: nil,
+            allocation: [
+                Allocation(variation: "control", range: [0, 50000]),
+                Allocation(variation: "treatment", range: [50000, 100000]),
+            ]
+        )
+
+        for (bucket, variation) in expected {
+            XCTAssertEqual(reader.getMatchedAllocation(traffic, bucketValue: Int(bucket)!)?.variation, variation)
+        }
+    }
+
     func testGetters() {
         let logger = createLogger(level: .fatal)
         let reader = DatafileReader(datafile: TestFixtures.basicDatafile(), logger: logger)
