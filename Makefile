@@ -11,7 +11,7 @@ test:
 
 test-example-1:
 	swift test
-	swift run featurevisor test --projectDirectoryPath=/Users/fahad/Projects/featurevisor/featurevisor/examples/example-1 --onlyFailures
+	swift run featurevisor test --projectDirectoryPath=$(abspath ../featurevisor/examples/example-1) --onlyFailures
 
 clean:
 	swift package clean
