@@ -21,6 +21,13 @@ struct TestCommand {
         }
 
         let segments = loadSegments(options)
+        if !options.targets.isEmpty {
+            let availableTargets = loadTargetKeys(options)
+            if let unknown = options.targets.first(where: { !availableTargets.contains($0) }) {
+                print("Unknown target \"\(unknown)\". Available targets: \(availableTargets.isEmpty ? "none" : availableTargets.joined(separator: ", ")).")
+                return 1
+            }
+        }
         let datafileCache = buildDatafileCache(options: options, config: config)
 
         var testArgs = ["list", "--tests", "--applyMatrix", "--json"]
@@ -35,6 +42,14 @@ struct TestCommand {
 
         for test in tests {
             if let featureKey = test["feature"] as? String {
+                if !options.targets.isEmpty,
+                   let assertions = test["assertions"] as? [[String: Any]],
+                   !assertions.contains(where: { assertion in
+                       guard let target = assertion["target"] as? String else { return true }
+                       return options.targets.contains(target)
+                   }) {
+                    continue
+                }
                 let result = runFeatureTest(
                     featureKey: featureKey,
                     test: test,
@@ -118,7 +133,8 @@ struct TestCommand {
         var cache: [String: DatafileContent] = [:]
         let envs = CLIHelpers.stringArray(config["environments"])
         let environments: [String?] = envs.isEmpty ? [nil] : envs.map(Optional.some)
-        let targetKeys = loadTargetKeys(options)
+        let availableTargets = loadTargetKeys(options)
+        let targetKeys = options.targets.isEmpty ? availableTargets : options.targets
 
         for environment in environments {
             guard let base = CLIHelpers.buildDatafileJSON(
@@ -170,8 +186,15 @@ struct TestCommand {
         options: CLIOptions,
         datafileCache: [String: DatafileContent]
     ) -> (ok: Bool, passed: Int, failed: Int) {
-        guard let assertions = test["assertions"] as? [[String: Any]] else {
+        guard var assertions = test["assertions"] as? [[String: Any]] else {
             return (false, 0, 1)
+        }
+        if !options.targets.isEmpty {
+            assertions = assertions.filter { assertion in
+                guard let target = assertion["target"] as? String else { return true }
+                return options.targets.contains(target)
+            }
+            if assertions.isEmpty { return (true, 0, 0) }
         }
 
         let testKey = (test["key"] as? String) ?? featureKey

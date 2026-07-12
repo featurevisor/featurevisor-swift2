@@ -24,6 +24,11 @@ final class FeaturevisorCLITests: XCTestCase {
         XCTAssertEqual(opts.projectDirectoryPath, "/tmp/project")
     }
 
+    func testRepeatedTargets() {
+        let opts = CLIParser.parse(["benchmark", "--target=web", "--target=mobile", "--target=web"])
+        XCTAssertEqual(opts.targets, ["web", "mobile"])
+    }
+
     func testTargetDatafileCacheKey() {
         let command = TestCommand()
 
