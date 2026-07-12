@@ -2,8 +2,8 @@ import Foundation
 
 public struct EvaluateDependencies: Sendable {
     public var context: Context
-    public var logger: Logger
-    public var modulesManager: ModulesManager
+    var reportDiagnostic: @Sendable (FeaturevisorDiagnostic) -> Void
+    var modulesManager: ModulesManager
     var datafileReader: DatafileReader
     public var sticky: StickyFeatures?
     public var defaultVariationValue: VariationValue?
@@ -11,7 +11,7 @@ public struct EvaluateDependencies: Sendable {
 
     init(
         context: Context,
-        logger: Logger,
+        reportDiagnostic: @escaping @Sendable (FeaturevisorDiagnostic) -> Void,
         modulesManager: ModulesManager,
         datafileReader: DatafileReader,
         sticky: StickyFeatures? = nil,
@@ -19,7 +19,7 @@ public struct EvaluateDependencies: Sendable {
         defaultVariableValue: VariableValue? = nil
     ) {
         self.context = context
-        self.logger = logger
+        self.reportDiagnostic = reportDiagnostic
         self.modulesManager = modulesManager
         self.datafileReader = datafileReader
         self.sticky = sticky
@@ -78,7 +78,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let context = options.dependencies.context
     let datafileReader = options.dependencies.datafileReader
     let modulesManager = options.dependencies.modulesManager
-    let logger = options.dependencies.logger
+    let reportDiagnostic = options.dependencies.reportDiagnostic
 
     do {
         if type != .flag {
@@ -111,7 +111,12 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                     }
                 }
 
-                logger.debug("feature is disabled", details: ["featureKey": featureKey])
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .debug,
+                    code: "disabled",
+                    message: "Feature is disabled",
+                    details: ["featureKey": .string(featureKey)]
+                ))
                 return disabled
             }
         }
@@ -141,20 +146,61 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         }
 
         guard let feature = datafileReader.getFeature(featureKey) else {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "feature_not_found",
+                message: "Feature not found",
+                details: ["featureKey": .string(featureKey)]
+            ))
             return Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
+        }
+
+        if type == .flag, feature.deprecated == true {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "deprecated_feature",
+                message: "Feature is deprecated",
+                details: ["featureKey": .string(featureKey)]
+            ))
         }
 
         var variableSchema: ResolvedVariableSchema?
         if let variableKey {
             variableSchema = feature.variablesSchema?[variableKey]
             if variableSchema == nil {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .warn,
+                    code: "variable_not_found",
+                    message: "Variable schema not found",
+                    details: [
+                        "featureKey": .string(featureKey),
+                        "variableKey": .string(variableKey),
+                    ]
+                ))
                 var out = Evaluation(type: type, featureKey: featureKey, reason: .variableNotFound)
                 out.variableKey = variableKey
                 return out
             }
+            if variableSchema?.deprecated == true {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .warn,
+                    code: "deprecated_variable",
+                    message: "Variable is deprecated",
+                    details: [
+                        "featureKey": .string(featureKey),
+                        "variableKey": .string(variableKey),
+                    ]
+                ))
+            }
         }
 
         if type == .variation, (feature.variations ?? []).isEmpty {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "no_variations",
+                message: "No variations",
+                details: ["featureKey": .string(featureKey)]
+            ))
             return Evaluation(type: type, featureKey: featureKey, reason: .noVariations)
         }
 

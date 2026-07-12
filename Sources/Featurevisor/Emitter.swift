@@ -14,7 +14,7 @@ public struct EventPayload: Sendable {
 
 public typealias EventCallback = @Sendable (_ payload: EventPayload) -> Void
 
-public final class Emitter: @unchecked Sendable {
+final class Emitter: @unchecked Sendable {
     private struct Listener {
         let id: UUID
         let callback: EventCallback

@@ -4,7 +4,6 @@ public struct FeaturevisorOptions: Sendable {
     public var datafile: DatafileContent?
     public var context: Context
     public var logLevel: LogLevel
-    public var logger: Logger?
     public var onDiagnostic: FeaturevisorDiagnosticHandler?
     public var sticky: StickyFeatures?
     public var modules: [FeaturevisorModule]
@@ -12,8 +11,7 @@ public struct FeaturevisorOptions: Sendable {
     public init(
         datafile: DatafileContent? = nil,
         context: Context = [:],
-        logLevel: LogLevel = Logger.defaultLevel,
-        logger: Logger? = nil,
+        logLevel: LogLevel = .info,
         onDiagnostic: FeaturevisorDiagnosticHandler? = nil,
         sticky: StickyFeatures? = nil,
         modules: [FeaturevisorModule] = []
@@ -21,7 +19,6 @@ public struct FeaturevisorOptions: Sendable {
         self.datafile = datafile
         self.context = context
         self.logLevel = logLevel
-        self.logger = logger
         self.onDiagnostic = onDiagnostic
         self.sticky = sticky
         self.modules = modules
@@ -37,7 +34,7 @@ private struct ModuleDiagnosticSubscription: Sendable {
     let logLevel: LogLevel
 }
 
-public final class FeaturevisorInstance: @unchecked Sendable {
+public final class Featurevisor: @unchecked Sendable {
     private var context: Context
     private let logger: Logger
     private var logLevel: LogLevel
@@ -51,9 +48,9 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     private let emitter: Emitter
     private var closed = false
 
-    public init(options: FeaturevisorOptions) {
+    fileprivate init(options: FeaturevisorOptions) {
         self.context = options.context
-        self.logger = options.logger ?? createLogger(level: options.logLevel)
+        self.logger = createLogger(level: options.logLevel)
         self.logLevel = options.logLevel
         self.onDiagnostic = options.onDiagnostic
         self.sticky = options.sticky
@@ -77,6 +74,18 @@ public final class FeaturevisorInstance: @unchecked Sendable {
                 self?.clearModuleDiagnosticSubscriptions(module)
             }
         )
+
+        self.logger.setHandler { [weak self] level, message, details in
+            var code = details["reason"] ?? message
+            if message == "feature is deprecated" { code = "deprecated_feature" }
+            if message == "variable is deprecated" { code = "deprecated_variable" }
+            self?.reportDiagnostic(FeaturevisorDiagnostic(
+                level: level,
+                code: code,
+                message: message,
+                details: details.mapValues { .string($0) }
+            ))
+        }
 
         if let datafile = options.datafile {
             setDatafile(datafile, replace: true)
@@ -136,7 +145,12 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     }
 
     public func getRevision() -> String { datafileReader.getRevision() }
+    public func getSchemaVersion() -> String { datafileReader.getSchemaVersion() }
+    public func getSegment(_ segmentKey: SegmentKey) -> Segment? { datafileReader.getSegment(segmentKey) }
     public func getFeature(_ featureKey: String) -> Feature? { datafileReader.getFeature(featureKey) }
+    public func getFeatureKeys() -> [FeatureKey] { datafileReader.getFeatureKeys() }
+    public func getVariableKeys(_ featureKey: FeatureKey) -> [String] { datafileReader.getVariableKeys(featureKey) }
+    public func hasVariations(_ featureKey: FeatureKey) -> Bool { datafileReader.hasVariations(featureKey) }
 
     @discardableResult
     public func addModule(_ module: FeaturevisorModule) -> FeaturevisorUnsubscribe? {
@@ -183,13 +197,7 @@ public final class FeaturevisorInstance: @unchecked Sendable {
                 if let moduleName = diagnostic.moduleName { details["moduleName"] = moduleName }
                 if let originalError = diagnostic.originalError { details["originalError"] = originalError }
 
-                switch diagnostic.level {
-                case .debug: logger.debug(diagnostic.message, details: details)
-                case .info: logger.info(diagnostic.message, details: details)
-                case .warn: logger.warn(diagnostic.message, details: details)
-                case .error: logger.error(diagnostic.message, details: details)
-                case .fatal: logger.fatal(diagnostic.message, details: details)
-                }
+                Logger.writeToConsole(diagnostic.level, diagnostic.message, details)
             }
         }
 
@@ -270,7 +278,9 @@ public final class FeaturevisorInstance: @unchecked Sendable {
     private func dependencies(_ context: Context, options: OverrideOptions = OverrideOptions()) -> EvaluateDependencies {
         EvaluateDependencies(
             context: getContext(context),
-            logger: logger,
+            reportDiagnostic: { [weak self] diagnostic in
+                self?.reportDiagnostic(diagnostic)
+            },
             modulesManager: modulesManager,
             datafileReader: datafileReader,
             sticky: options.sticky ?? sticky,
@@ -366,6 +376,6 @@ private func mergeStoredDatafile(existing: DatafileContent, incoming: DatafileCo
     )
 }
 
-public func createInstance(_ options: FeaturevisorOptions = FeaturevisorOptions()) -> FeaturevisorInstance {
-    FeaturevisorInstance(options: options)
+public func createFeaturevisor(_ options: FeaturevisorOptions = FeaturevisorOptions()) -> Featurevisor {
+    Featurevisor(options: options)
 }

@@ -160,7 +160,7 @@ struct TestCommand {
         return cache
     }
 
-    private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> FeaturevisorInstance {
+    private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> Featurevisor {
         let sticky = CLIHelpers.anyToSticky(assertion["sticky"])
         let forcedAt = CLIHelpers.doubleValue(assertion["at"])
         let module = FeaturevisorModule(name: "test-module", bucketValue: { options in
@@ -170,7 +170,7 @@ struct TestCommand {
             return options.bucketValue
         })
 
-        return createInstance(
+        return createFeaturevisor(
             FeaturevisorOptions(
                 datafile: datafile,
                 logLevel: CLIHelpers.loggerLevel(options),

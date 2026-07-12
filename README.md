@@ -7,6 +7,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 ## Table of contents <!-- omit in toc -->
 
 - [Installation](#installation)
+- [Public API](#public-api)
 - [Initialization](#initialization)
 - [Evaluation types](#evaluation-types)
 - [Context](#context)
@@ -28,11 +29,9 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
   - [Loading datafiles on demand](#loading-datafiles-on-demand)
   - [Updating datafile](#updating-datafile)
   - [Interval-based update](#interval-based-update)
-- [Logging](#logging)
-  - [Levels](#levels)
-  - [Customizing levels](#customizing-levels)
-  - [Handler](#handler)
 - [Diagnostics](#diagnostics)
+  - [Levels](#levels)
+  - [Handler](#handler)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
@@ -68,6 +67,18 @@ Then add the product dependency:
 .product(name: "Featurevisor", package: "featurevisor-swift2")
 ```
 
+## Public API
+
+The main runtime API is `createFeaturevisor()`:
+
+```swift
+let f: Featurevisor = createFeaturevisor(
+    FeaturevisorOptions(datafile: datafileContent)
+)
+```
+
+Most applications only need `createFeaturevisor`, `Featurevisor`, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
+
 ## Initialization
 
 The SDK can be initialized by passing [datafile](https://featurevisor.com/docs/building-datafiles/) content directly:
@@ -80,7 +91,7 @@ let datafileURL = URL(string: "https://cdn.yoursite.com/datafile.json")!
 let data = try Data(contentsOf: datafileURL)
 let datafileContent = try DatafileContent.fromData(data)
 
-let f = createInstance(
+let f = createFeaturevisor(
     FeaturevisorOptions(
         datafile: datafileContent
     )
@@ -117,7 +128,7 @@ let context: Context = [
 You can set context at the time of initialization:
 
 ```swift
-let f = createInstance(
+let f = createFeaturevisor(
     FeaturevisorOptions(
         context: [
             "deviceId": .string("123"),
@@ -271,7 +282,7 @@ Sticky values belong to an SDK or child instance. Evaluation options do not acce
 ### Initialize with sticky
 
 ```swift
-let f = createInstance(
+let f = createFeaturevisor(
     FeaturevisorOptions(
         sticky: [
             "myFeatureKey": EvaluatedFeature(
@@ -338,7 +349,7 @@ Because merging is the default, a single SDK instance can start with a small dat
 This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
 
 ```swift
-let f = createInstance(FeaturevisorOptions())
+let f = createFeaturevisor(FeaturevisorOptions())
 
 func loadDatafile(target: String) {
     let url = URL(string: "https://cdn.yoursite.com/production/featurevisor-\(target).json")!
@@ -373,62 +384,32 @@ Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
 }
 ```
 
-## Logging
+## Diagnostics
 
-By default, Featurevisor SDK logs from `info` level and above.
+By default, Featurevisor reports diagnostics to the console for `info` level and above with a `[Featurevisor]` prefix.
 
 ### Levels
 
-These are available log levels:
+Available diagnostic levels are `fatal`, `error`, `warn`, `info`, and `debug`.
 
-- `debug`
-- `info`
-- `warn`
-- `error`
-- `fatal`
-
-### Customizing levels
-
-You can set log level at initialization:
+Set the level during initialization or update it afterwards:
 
 ```swift
-let f = createInstance(
-    FeaturevisorOptions(
-        logLevel: .debug
-    )
+let f = createFeaturevisor(
+    FeaturevisorOptions(logLevel: .debug)
 )
-```
 
-Or set it afterwards:
-
-```swift
-f.setLogLevel(.debug)
+f.setLogLevel(.info)
 ```
 
 ### Handler
 
-If you want to fully control log output, pass a custom logger:
+Use `onDiagnostic` to send structured diagnostics to your observability system:
 
 ```swift
-let logger = createLogger(level: .debug) { level, message, details in
-    print("[\(level)] \(message) \(details)")
-}
-
-let f = createInstance(
+let f = createFeaturevisor(
     FeaturevisorOptions(
-        datafile: datafileContent,
-        logger: logger
-    )
-)
-```
-
-## Diagnostics
-
-You can observe SDK and module diagnostics with `onDiagnostic`:
-
-```swift
-let f = createInstance(
-    FeaturevisorOptions(
+        logLevel: .info,
         onDiagnostic: { diagnostic in
             print(diagnostic.level, diagnostic.code, diagnostic.message)
         }
@@ -438,7 +419,8 @@ let f = createInstance(
 
 Modules can also subscribe to diagnostics or report their own diagnostics from `setup` using the provided module API.
 
-Every diagnostic has `level`, `code`, `message`, and an object-shaped `details` dictionary. Optional `module`, `moduleName`, and `originalError` fields describe provenance; evaluation metadata belongs in `details`.
+Every diagnostic has `level`, `code`, `message`, and an object-shaped `details` dictionary. Optional `module`, `moduleName`, and `originalError` fields describe provenance. Evaluation metadata belongs in `details`.
+
 
 ## Events
 
@@ -535,7 +517,7 @@ let module = FeaturevisorModule(
 ### Registering modules
 
 ```swift
-let f = createInstance(
+let f = createFeaturevisor(
     FeaturevisorOptions(
         modules: [module]
     )

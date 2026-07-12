@@ -8,21 +8,30 @@ public enum LogLevel: Int, Codable, CaseIterable, Sendable {
     case fatal = 50
 }
 
-public typealias LogHandler = @Sendable (_ level: LogLevel, _ message: String, _ details: [String: String]) -> Void
+typealias LogHandler = @Sendable (_ level: LogLevel, _ message: String, _ details: [String: String]) -> Void
 
-public final class Logger: @unchecked Sendable {
-    public static let defaultLevel: LogLevel = .info
+final class Logger: @unchecked Sendable {
+    static let defaultLevel: LogLevel = .info
 
     private var level: LogLevel
-    private let handler: LogHandler?
+    private var handler: LogHandler?
 
-    public init(level: LogLevel = Logger.defaultLevel, handler: LogHandler? = nil) {
+    init(level: LogLevel = Logger.defaultLevel, handler: LogHandler? = nil) {
         self.level = level
         self.handler = handler
     }
 
-    public func setLevel(_ level: LogLevel) {
+    func setLevel(_ level: LogLevel) {
         self.level = level
+    }
+
+    func setHandler(_ handler: LogHandler?) {
+        self.handler = handler
+    }
+
+    static func writeToConsole(_ level: LogLevel, _ message: String, _ details: [String: String]) {
+        let serialized = details.isEmpty ? "" : " \(details)"
+        FileHandle.standardError.write(Data("[Featurevisor] \(message)\(serialized)\n".utf8))
     }
 
     private func shouldLog(_ incoming: LogLevel) -> Bool {
@@ -35,17 +44,16 @@ public final class Logger: @unchecked Sendable {
             handler(incoming, message, details)
             return
         }
-        let serialized = details.isEmpty ? "" : " \(details)"
-        FileHandle.standardError.write(Data("[\(incoming)] \(message)\(serialized)\n".utf8))
+        Logger.writeToConsole(incoming, message, details)
     }
 
-    public func debug(_ message: String, details: [String: String] = [:]) { emit(.debug, message, details) }
-    public func info(_ message: String, details: [String: String] = [:]) { emit(.info, message, details) }
-    public func warn(_ message: String, details: [String: String] = [:]) { emit(.warn, message, details) }
-    public func error(_ message: String, details: [String: String] = [:]) { emit(.error, message, details) }
-    public func fatal(_ message: String, details: [String: String] = [:]) { emit(.fatal, message, details) }
+    func debug(_ message: String, details: [String: String] = [:]) { emit(.debug, message, details) }
+    func info(_ message: String, details: [String: String] = [:]) { emit(.info, message, details) }
+    func warn(_ message: String, details: [String: String] = [:]) { emit(.warn, message, details) }
+    func error(_ message: String, details: [String: String] = [:]) { emit(.error, message, details) }
+    func fatal(_ message: String, details: [String: String] = [:]) { emit(.fatal, message, details) }
 }
 
-public func createLogger(level: LogLevel = Logger.defaultLevel, handler: LogHandler? = nil) -> Logger {
+func createLogger(level: LogLevel = Logger.defaultLevel, handler: LogHandler? = nil) -> Logger {
     Logger(level: level, handler: handler)
 }

@@ -2,8 +2,8 @@ import XCTest
 @testable import Featurevisor
 
 final class IndexTests: XCTestCase {
-    func testCreateInstanceExists() {
-        let instance = createInstance()
+    func testCreateFeaturevisorExists() {
+        let instance = createFeaturevisor()
         XCTAssertNotNil(instance)
     }
 }

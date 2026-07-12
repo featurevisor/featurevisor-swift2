@@ -83,7 +83,7 @@ public struct FeaturevisorModule: Sendable {
     }
 }
 
-public final class ModulesManager: @unchecked Sendable {
+final class ModulesManager: @unchecked Sendable {
     private var modules: [FeaturevisorModule] = []
     private let reportDiagnostic: @Sendable (FeaturevisorDiagnostic, FeaturevisorModule?) -> Void
     private let getModuleApi: @Sendable (FeaturevisorModule) -> FeaturevisorModuleApi

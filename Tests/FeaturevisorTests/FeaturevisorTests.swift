@@ -49,7 +49,7 @@ final class FeaturevisorTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(FeaturevisorOptions(datafile: datafile))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
         XCTAssertTrue(sdk.isEnabled("test", ["userId": .string("123")]))
     }
 
@@ -97,7 +97,7 @@ final class FeaturevisorTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(FeaturevisorOptions(datafile: datafile))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
         XCTAssertEqual(sdk.getVariableString("test", "color", ["userId": .string("123")]), "red")
     }
 }

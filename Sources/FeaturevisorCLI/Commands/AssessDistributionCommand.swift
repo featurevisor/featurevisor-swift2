@@ -48,7 +48,7 @@ struct AssessDistributionCommand {
             return 1
         }
 
-        let sdk = createInstance(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
         let baseContext = CLIHelpers.parseContext(options.context)
 
         var flagCounts: [String: Int] = ["enabled": 0, "disabled": 0]
