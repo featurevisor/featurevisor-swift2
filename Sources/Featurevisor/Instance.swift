@@ -202,11 +202,16 @@ public final class Featurevisor: @unchecked Sendable {
         }
 
         if diagnostic.level == .error {
-            emitter.trigger(.error, payload: EventPayload([
+            var normalized: [String: AnyValue] = [
+                "level": .string(String(describing: diagnostic.level)),
                 "code": .string(diagnostic.code),
                 "message": .string(diagnostic.message),
-                "level": .string("error"),
-            ]))
+                "details": .object(diagnostic.details),
+            ]
+            if let module = diagnostic.module { normalized["module"] = .string(module) }
+            if let moduleName = diagnostic.moduleName { normalized["moduleName"] = .string(moduleName) }
+            if let originalError = diagnostic.originalError { normalized["originalError"] = .string(originalError) }
+            emitter.trigger(.error, payload: EventPayload(["diagnostic": .object(normalized)]))
         }
     }
 

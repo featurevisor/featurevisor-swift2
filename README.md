@@ -460,11 +460,15 @@ unsubscribe()
 
 ```swift
 let unsubscribe = f.on(.error) { payload in
-    print(payload.params["message"] ?? "")
+    if case .object(let diagnostic)? = payload.params["diagnostic"] {
+        print(diagnostic["message"] ?? "")
+    }
 }
 
 unsubscribe()
 ```
+
+The `error` event is emitted for diagnostics whose level is `error`.
 
 ## Evaluation details
 

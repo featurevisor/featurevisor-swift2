@@ -94,7 +94,8 @@ final class ModulesTests: XCTestCase {
         ))
 
         sdk.on(.error) { payload in
-            if case .string(let code)? = payload.params["code"] {
+            if case .object(let diagnostic)? = payload.params["diagnostic"],
+               case .string(let code)? = diagnostic["code"] {
                 errorEventCodes.value.append(code)
             }
         }
