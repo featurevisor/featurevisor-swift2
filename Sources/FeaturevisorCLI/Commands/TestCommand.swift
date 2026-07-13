@@ -20,11 +20,15 @@ struct TestCommand {
             return 1
         }
 
-        let schemaVersion = options.schemaVersion.isEmpty ? (config["schemaVersion"] as? String ?? "") : options.schemaVersion
-
         let segments = loadSegments(options)
-        let scopesByName = getScopesByName(config)
-        let datafileCache = buildDatafileCache(options: options, config: config, schemaVersion: schemaVersion)
+        if !options.targets.isEmpty {
+            let availableTargets = loadTargetKeys(options)
+            if let unknown = options.targets.first(where: { !availableTargets.contains($0) }) {
+                print("Unknown target \"\(unknown)\". Available targets: \(availableTargets.isEmpty ? "none" : availableTargets.joined(separator: ", ")).")
+                return 1
+            }
+        }
+        let datafileCache = buildDatafileCache(options: options, config: config)
 
         var testArgs = ["list", "--tests", "--applyMatrix", "--json"]
         if !options.keyPattern.isEmpty { testArgs.append("--keyPattern=\(options.keyPattern)") }
@@ -38,11 +42,18 @@ struct TestCommand {
 
         for test in tests {
             if let featureKey = test["feature"] as? String {
+                if !options.targets.isEmpty,
+                   let assertions = test["assertions"] as? [[String: Any]],
+                   !assertions.contains(where: { assertion in
+                       guard let target = assertion["target"] as? String else { return true }
+                       return options.targets.contains(target)
+                   }) {
+                    continue
+                }
                 let result = runFeatureTest(
                     featureKey: featureKey,
                     test: test,
                     options: options,
-                    scopesByName: scopesByName,
                     datafileCache: datafileCache
                 )
                 summary.passedTests += result.ok ? 1 : 0
@@ -87,100 +98,61 @@ struct TestCommand {
         return output
     }
 
-    private func getScopesByName(_ config: [String: Any]) -> [String: [String: Any]] {
-        var result: [String: [String: Any]] = [:]
-        let scopes = config["scopes"] as? [[String: Any]] ?? []
-
-        for scope in scopes {
-            guard let name = scope["name"] as? String else { continue }
-            result[name] = scope["context"] as? [String: Any] ?? [:]
-        }
-
-        return result
-    }
-
-    private func datafileCacheKey(_ environment: String?) -> String {
+    func datafileCacheKey(_ environment: String?) -> String {
         if let environment, !environment.isEmpty { return environment }
         return CLIHelpers.noEnvironmentKey
     }
 
-    private func taggedDatafileCacheKey(_ environment: String?, _ tag: String) -> String {
-        if let environment, !environment.isEmpty { return "\(environment)-tag-\(tag)" }
-        return "tag-\(tag)"
-    }
-
-    private func scopedDatafileCacheKey(_ environment: String?, _ scope: String) -> String {
-        if let environment, !environment.isEmpty { return "\(environment)-scope-\(scope)" }
-        return "scope-\(scope)"
-    }
-
-    private func getDatafilesDirectoryPath(config: [String: Any], options: CLIOptions) -> String {
-        let configured = (config["datafilesDirectoryPath"] as? String) ?? "datafiles"
-        if configured.hasPrefix("/") { return configured }
-        return URL(fileURLWithPath: options.projectDirectoryPath).appendingPathComponent(configured).path
-    }
-
-    private func ensureDatafilesBuilt(options: CLIOptions, environment: String?, schemaVersion: String) {
-        var args = ["build", "--no-state-files"]
+    func targetDatafileCacheKey(_ environment: String?, _ target: String) -> String {
         if let environment, !environment.isEmpty {
-            args.append("--environment=\(environment)")
+            return "\(environment)-target-\(target)"
         }
-        if !schemaVersion.isEmpty {
-            args.append("--schema-version=\(schemaVersion)")
-        }
-        if options.inflate > 0 {
-            args.append("--inflate=\(options.inflate)")
-        }
-        _ = FeaturevisorProcess.run(projectDirectoryPath: options.projectDirectoryPath, args: args)
+        return "false-target-\(target)"
     }
 
-    private func buildDatafileCache(options: CLIOptions, config: [String: Any], schemaVersion: String) -> [String: DatafileContent] {
+    func datafileCacheKeyForAssertion(_ assertion: [String: Any], datafileCache: [String: DatafileContent]) -> String {
+        let env = assertion["environment"] as? String
+        let target = assertion["target"] as? String
+        if let target {
+            let targetKey = targetDatafileCacheKey(env, target)
+            if datafileCache[targetKey] != nil {
+                return targetKey
+            }
+        }
+        return datafileCacheKey(env)
+    }
+
+    private func loadTargetKeys(_ options: CLIOptions) -> [String] {
+        guard let targets = CLIHelpers.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["list", "--targets", "--json"]) as? [[String: Any]] else {
+            return []
+        }
+        return targets.compactMap { $0["key"] as? String }
+    }
+
+    private func buildDatafileCache(options: CLIOptions, config: [String: Any]) -> [String: DatafileContent] {
         var cache: [String: DatafileContent] = [:]
         let envs = CLIHelpers.stringArray(config["environments"])
         let environments: [String?] = envs.isEmpty ? [nil] : envs.map(Optional.some)
+        let availableTargets = loadTargetKeys(options)
+        let targetKeys = options.targets.isEmpty ? availableTargets : options.targets
 
         for environment in environments {
             guard let base = CLIHelpers.buildDatafileJSON(
                 projectDirectoryPath: options.projectDirectoryPath,
                 environment: environment,
-                schemaVersion: schemaVersion,
-                inflate: options.inflate,
-                tag: nil
+                inflate: options.inflate
             ) else { continue }
 
             cache[datafileCacheKey(environment)] = base
 
-            if options.withTags {
-                for tag in CLIHelpers.stringArray(config["tags"]) {
-                    if let tagged = CLIHelpers.buildDatafileJSON(
-                        projectDirectoryPath: options.projectDirectoryPath,
-                        environment: environment,
-                        schemaVersion: schemaVersion,
-                        inflate: options.inflate,
-                        tag: tag
-                    ) {
-                        cache[taggedDatafileCacheKey(environment, tag)] = tagged
-                    }
-                }
-            }
-
-            if options.withScopes {
-                ensureDatafilesBuilt(options: options, environment: environment, schemaVersion: schemaVersion)
-                let dir = getDatafilesDirectoryPath(config: config, options: options)
-                let scopes = config["scopes"] as? [[String: Any]] ?? []
-                for scope in scopes {
-                    guard let scopeName = scope["name"] as? String else { continue }
-                    let filename = "featurevisor-scope-\(scopeName).json"
-                    let path: String
-                    if let environment, !environment.isEmpty {
-                        path = URL(fileURLWithPath: dir).appendingPathComponent(environment).appendingPathComponent(filename).path
-                    } else {
-                        path = URL(fileURLWithPath: dir).appendingPathComponent(filename).path
-                    }
-
-                    guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-                          let datafile = try? DatafileContent.fromData(data) else { continue }
-                    cache[scopedDatafileCacheKey(environment, scopeName)] = datafile
+            for target in targetKeys {
+                if let targetDatafile = CLIHelpers.buildDatafileJSON(
+                    projectDirectoryPath: options.projectDirectoryPath,
+                    environment: environment,
+                    inflate: options.inflate,
+                    target: target
+                ) {
+                    cache[targetDatafileCacheKey(environment, target)] = targetDatafile
                 }
             }
         }
@@ -188,22 +160,22 @@ struct TestCommand {
         return cache
     }
 
-    private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> FeaturevisorInstance {
+    private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> Featurevisor {
         let sticky = CLIHelpers.anyToSticky(assertion["sticky"])
         let forcedAt = CLIHelpers.doubleValue(assertion["at"])
-        let hook = Hook(name: "test-hook", bucketValue: { current in
+        let module = FeaturevisorModule(name: "test-module", bucketValue: { options in
             if let at = forcedAt {
                 return Int(at * 1000)
             }
-            return current
+            return options.bucketValue
         })
 
-        return createInstance(
-            InstanceOptions(
+        return createFeaturevisor(
+            FeaturevisorOptions(
                 datafile: datafile,
                 logLevel: CLIHelpers.loggerLevel(options),
                 sticky: sticky,
-                hooks: [hook]
+                modules: [module]
             )
         )
     }
@@ -212,11 +184,17 @@ struct TestCommand {
         featureKey: String,
         test: [String: Any],
         options: CLIOptions,
-        scopesByName: [String: [String: Any]],
         datafileCache: [String: DatafileContent]
     ) -> (ok: Bool, passed: Int, failed: Int) {
-        guard let assertions = test["assertions"] as? [[String: Any]] else {
+        guard var assertions = test["assertions"] as? [[String: Any]] else {
             return (false, 0, 1)
+        }
+        if !options.targets.isEmpty {
+            assertions = assertions.filter { assertion in
+                guard let target = assertion["target"] as? String else { return true }
+                return options.targets.contains(target)
+            }
+            if assertions.isEmpty { return (true, 0, 0) }
         }
 
         let testKey = (test["key"] as? String) ?? featureKey
@@ -227,17 +205,7 @@ struct TestCommand {
         for assertion in assertions {
             let description = (assertion["description"] as? String) ?? "assertion"
             let env = assertion["environment"] as? String
-            let scope = assertion["scope"] as? String
-            let tag = assertion["tag"] as? String
-
-            let cacheKey: String
-            if let scope {
-                cacheKey = scopedDatafileCacheKey(env, scope)
-            } else if let tag {
-                cacheKey = taggedDatafileCacheKey(env, tag)
-            } else {
-                cacheKey = datafileCacheKey(env)
-            }
+            let cacheKey = datafileCacheKeyForAssertion(assertion, datafileCache: datafileCache)
 
             guard let datafile = datafileCache[cacheKey] ?? datafileCache[datafileCacheKey(env)] else {
                 failed += 1
@@ -254,9 +222,6 @@ struct TestCommand {
             let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
 
             var contextMap: [String: Any] = [:]
-            if let scope, !options.withScopes, let scopedContext = scopesByName[scope] {
-                contextMap.merge(scopedContext, uniquingKeysWith: { _, new in new })
-            }
             if let assertionContext = assertion["context"] as? [String: Any] {
                 contextMap.merge(assertionContext, uniquingKeysWith: { _, new in new })
             }
@@ -351,7 +316,7 @@ struct TestCommand {
                     }
                     let childContext = CLIHelpers.parseContext(childContextMap)
                     let childSticky = CLIHelpers.anyToSticky(assertion["sticky"])
-                    let child = sdk.spawn(childContext, options: OverrideOptions(sticky: childSticky))
+                    let child = sdk.spawn(childContext, options: SpawnOptions(sticky: childSticky))
 
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
                        child.isEnabled(featureKey) != expectedEnabled {

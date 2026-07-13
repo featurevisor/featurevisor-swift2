@@ -4,6 +4,9 @@ import Featurevisor
 struct BenchmarkOutput {
     let value: AnyValue?
     let duration: TimeInterval
+    let minDuration: TimeInterval
+    let averageDuration: TimeInterval
+    let maxDuration: TimeInterval
 }
 
 struct BenchmarkCommand {
@@ -25,10 +28,33 @@ struct BenchmarkCommand {
     }
 
     private func benchmark(_ n: Int, _ block: () -> AnyValue?) -> BenchmarkOutput {
-        let start = Date()
         var value: AnyValue?
-        for _ in 0..<n { value = block() }
-        return BenchmarkOutput(value: value, duration: Date().timeIntervalSince(start))
+        var totalNanoseconds: UInt64 = 0
+        var minNanoseconds: UInt64?
+        var maxNanoseconds: UInt64 = 0
+
+        for _ in 0..<n {
+            let start = DispatchTime.now().uptimeNanoseconds
+            value = block()
+            let duration = DispatchTime.now().uptimeNanoseconds - start
+
+            totalNanoseconds += duration
+            if minNanoseconds == nil || duration < minNanoseconds! { minNanoseconds = duration }
+            if duration > maxNanoseconds { maxNanoseconds = duration }
+        }
+
+        let totalSeconds = Double(totalNanoseconds) / 1_000_000_000
+        return BenchmarkOutput(
+            value: value,
+            duration: totalSeconds,
+            minDuration: Double(minNanoseconds ?? 0) / 1_000_000_000,
+            averageDuration: totalSeconds / Double(n),
+            maxDuration: Double(maxNanoseconds) / 1_000_000_000
+        )
+    }
+
+    private func formatDurationMs(_ seconds: TimeInterval) -> String {
+        String(format: "%.6fms", seconds * 1000)
     }
 
     func run(_ options: CLIOptions) -> Int32 {
@@ -41,19 +67,34 @@ struct BenchmarkCommand {
             return 1
         }
 
+        if options.targets.count > 1 {
+            for target in options.targets {
+                var selected = options
+                selected.targets = [target]
+                if run(selected) != 0 { return 1 }
+            }
+            return 0
+        }
+
+        let target = options.targets.first
+
         let context = CLIHelpers.parseContext(options.context)
         guard let datafile = CLIHelpers.buildDatafileJSON(
             projectDirectoryPath: options.projectDirectoryPath,
             environment: options.environment,
-            schemaVersion: options.schemaVersion,
-            inflate: options.inflate
+            inflate: options.inflate,
+            target: target
         ) else {
             return 1
         }
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
 
-        print("\nRunning benchmark for feature \"\(options.feature)\"...")
+        print("\nBenchmark Featurevisor feature")
+        print("  Feature: \(options.feature)")
+        print("  Environment: \(options.environment)")
+        if let target { print("  Target: \(target)") }
+        print("  Iterations: \(options.n)")
         print("Against context: \(options.context.isEmpty ? "{}" : options.context)")
 
         let output: BenchmarkOutput
@@ -85,7 +126,9 @@ struct BenchmarkCommand {
 
         print("\nEvaluated value : \(valueString)")
         print("Total duration  : \(prettyDuration(output.duration))")
-        print("Average duration: \(prettyDuration(output.duration / Double(options.n)))")
+        print("Minimum duration: \(formatDurationMs(output.minDuration))")
+        print("Average duration: \(formatDurationMs(output.averageDuration))")
+        print("Maximum duration: \(formatDurationMs(output.maxDuration))")
 
         return 0
     }

@@ -1,12 +1,12 @@
 import Foundation
 
 public final class FeaturevisorChildInstance: @unchecked Sendable {
-    private let parent: FeaturevisorInstance
+    private let parent: Featurevisor
     private var context: Context
     private var sticky: StickyFeatures?
     private let emitter = Emitter()
 
-    init(parent: FeaturevisorInstance, context: Context, sticky: StickyFeatures?) {
+    init(parent: Featurevisor, context: Context, sticky: StickyFeatures?) {
         self.parent = parent
         self.context = context
         self.sticky = sticky
@@ -48,11 +48,12 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     }
 
     private func merge(_ options: OverrideOptions) -> OverrideOptions {
-        OverrideOptions(
-            sticky: options.sticky == nil ? sticky : (sticky ?? [:]).merging(options.sticky ?? [:], uniquingKeysWith: { _, new in new }),
+        var merged = OverrideOptions(
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )
+        merged.sticky = sticky
+        return merged
     }
 
     public func evaluateFlag(_ featureKey: FeatureKey, context: Context = [:], options: OverrideOptions = OverrideOptions()) -> Evaluation {

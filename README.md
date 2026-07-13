@@ -1,12 +1,13 @@
 # Featurevisor Swift SDK <!-- omit in toc -->
 
-This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v2.x to Swift, providing a way to evaluate feature flags, variations, and variables in your Swift applications.
+This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v3.x to Swift, providing a way to evaluate feature flags, variations, and variables in your Swift applications.
 
-This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 projects and above.
+This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects and v2 datafiles.
 
 ## Table of contents <!-- omit in toc -->
 
 - [Installation](#installation)
+- [Public API](#public-api)
 - [Initialization](#initialization)
 - [Evaluation types](#evaluation-types)
 - [Context](#context)
@@ -23,20 +24,23 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 proje
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
+  - [Merging by default](#merging-by-default)
+  - [Replacing](#replacing)
+  - [Loading datafiles on demand](#loading-datafiles-on-demand)
   - [Updating datafile](#updating-datafile)
   - [Interval-based update](#interval-based-update)
-- [Logging](#logging)
+- [Diagnostics](#diagnostics)
   - [Levels](#levels)
-  - [Customizing levels](#customizing-levels)
   - [Handler](#handler)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
   - [`sticky_set`](#sticky_set)
+  - [`error`](#error)
 - [Evaluation details](#evaluation-details)
-- [Hooks](#hooks)
-  - [Defining a hook](#defining-a-hook)
-  - [Registering hooks](#registering-hooks)
+- [Modules](#modules)
+  - [Defining a module](#defining-a-module)
+  - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
 - [CLI usage](#cli-usage)
@@ -63,6 +67,18 @@ Then add the product dependency:
 .product(name: "Featurevisor", package: "featurevisor-swift2")
 ```
 
+## Public API
+
+The main runtime API is `createFeaturevisor()`:
+
+```swift
+let f: Featurevisor = createFeaturevisor(
+    FeaturevisorOptions(datafile: datafileContent)
+)
+```
+
+Most applications only need `createFeaturevisor`, `Featurevisor`, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
+
 ## Initialization
 
 The SDK can be initialized by passing [datafile](https://featurevisor.com/docs/building-datafiles/) content directly:
@@ -75,8 +91,8 @@ let datafileURL = URL(string: "https://cdn.yoursite.com/datafile.json")!
 let data = try Data(contentsOf: datafileURL)
 let datafileContent = try DatafileContent.fromData(data)
 
-let f = createInstance(
-    InstanceOptions(
+let f = createFeaturevisor(
+    FeaturevisorOptions(
         datafile: datafileContent
     )
 )
@@ -112,8 +128,8 @@ let context: Context = [
 You can set context at the time of initialization:
 
 ```swift
-let f = createInstance(
-    InstanceOptions(
+let f = createFeaturevisor(
+    FeaturevisorOptions(
         context: [
             "deviceId": .string("123"),
             "country": .string("nl"),
@@ -244,6 +260,8 @@ f.getVariableObject(featureKey, variableKey, context)
 f.getVariableJSON(featureKey, variableKey, context)
 ```
 
+Type specific methods do not coerce strings or booleans into numbers. They return `nil` when the value does not match the requested type.
+
 ## Getting all evaluations
 
 You can get evaluations of all features available in the SDK instance:
@@ -259,11 +277,13 @@ This is handy especially when you want to pass all evaluations from a backend ap
 
 For the lifecycle of the SDK instance in your application, you can set some features with sticky values, meaning that they will not be evaluated against the fetched [datafile](https://featurevisor.com/docs/building-datafiles/):
 
+Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides; use `SpawnOptions(sticky: ...)` when a child needs its own sticky state.
+
 ### Initialize with sticky
 
 ```swift
-let f = createInstance(
-    InstanceOptions(
+let f = createFeaturevisor(
+    FeaturevisorOptions(
         sticky: [
             "myFeatureKey": EvaluatedFeature(
                 enabled: true,
@@ -303,6 +323,49 @@ You can also set using raw JSON string:
 f.setDatafile(json: jsonString)
 ```
 
+### Merging by default
+
+By default, `setDatafile` merges the incoming datafile with the SDK instance's existing datafile:
+
+- incoming `features` and `segments` override matching keys
+- existing `features` and `segments` that are missing from the incoming datafile are kept
+- `revision`, `schemaVersion`, and `featurevisorVersion` are taken from the incoming datafile
+
+This means you can call `setDatafile` more than once with different datafiles, and the SDK instance accumulates their features and segments together.
+
+### Replacing
+
+Pass `replace: true` to replace the stored datafile entirely:
+
+```swift
+f.setDatafile(datafileContent, replace: true)
+f.setDatafile(json: jsonString, replace: true)
+```
+
+### Loading datafiles on demand
+
+Because merging is the default, a single SDK instance can start with a small datafile and load more datafiles later as your application needs them, instead of downloading every feature upfront.
+
+This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
+
+```swift
+let f = createFeaturevisor(FeaturevisorOptions())
+
+func loadDatafile(target: String) {
+    let url = URL(string: "https://cdn.yoursite.com/production/featurevisor-\(target).json")!
+    if let data = try? Data(contentsOf: url),
+       let datafile = try? DatafileContent.fromData(data) {
+        // merges into whatever was loaded before
+        f.setDatafile(datafile)
+    }
+}
+
+loadDatafile(target: "products")
+
+// later, when the user reaches checkout
+loadDatafile(target: "checkout")
+```
+
 ### Updating datafile
 
 You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile_set) event that you can listen and react to accordingly.
@@ -321,54 +384,43 @@ Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
 }
 ```
 
-## Logging
+## Diagnostics
 
-By default, Featurevisor SDK logs from `info` level and above.
+By default, Featurevisor reports diagnostics to the console for `info` level and above with a `[Featurevisor]` prefix.
 
 ### Levels
 
-These are available log levels:
+Available diagnostic levels are `fatal`, `error`, `warn`, `info`, and `debug`.
 
-- `debug`
-- `info`
-- `warn`
-- `error`
-- `fatal`
-
-### Customizing levels
-
-You can set log level at initialization:
+Set the level during initialization or update it afterwards:
 
 ```swift
-let f = createInstance(
-    InstanceOptions(
-        logLevel: .debug
-    )
+let f = createFeaturevisor(
+    FeaturevisorOptions(logLevel: .debug)
 )
-```
 
-Or set it afterwards:
-
-```swift
-f.setLogLevel(.debug)
+f.setLogLevel(.info)
 ```
 
 ### Handler
 
-If you want to fully control log output, pass a custom logger:
+Use `onDiagnostic` to send structured diagnostics to your observability system:
 
 ```swift
-let logger = createLogger(level: .debug) { level, message, details in
-    print("[\(level)] \(message) \(details)")
-}
-
-let f = createInstance(
-    InstanceOptions(
-        datafile: datafileContent,
-        logger: logger
+let f = createFeaturevisor(
+    FeaturevisorOptions(
+        logLevel: .info,
+        onDiagnostic: { diagnostic in
+            print(diagnostic.level, diagnostic.code, diagnostic.message)
+        }
     )
 )
 ```
+
+Modules can also subscribe to diagnostics or report their own diagnostics from `setup` using the provided module API.
+
+Every diagnostic has `level`, `code`, `message`, and an object-shaped `details` dictionary. Optional `module`, `moduleName`, and `originalError` fields describe provenance. Evaluation metadata belongs in `details`.
+
 
 ## Events
 
@@ -404,6 +456,20 @@ let unsubscribe = f.on(.stickySet) { _ in
 unsubscribe()
 ```
 
+### `error`
+
+```swift
+let unsubscribe = f.on(.error) { payload in
+    if case .object(let diagnostic)? = payload.params["diagnostic"] {
+        print(diagnostic["message"] ?? "")
+    }
+}
+
+unsubscribe()
+```
+
+The `error` event is emitted for diagnostics whose level is `error`.
+
 ## Evaluation details
 
 If you need evaluation metadata, use:
@@ -414,35 +480,55 @@ let variationDetails = f.evaluateVariation("my_feature")
 let variableDetails = f.evaluateVariable("my_feature", "my_variable")
 ```
 
-## Hooks
+## Modules
 
-Hooks allow you to intercept evaluation inputs and outputs.
+Modules allow you to intercept evaluation inputs and outputs.
 
-### Defining a hook
+### Defining a module
 
 ```swift
-let hook = Hook(
-    name: "my-hook",
-    before: { input in
-        input
+let module = FeaturevisorModule(
+    name: "my-module",
+    setup: { api in
+        api.reportDiagnostic(
+            FeaturevisorDiagnostic(
+                level: .info,
+                code: "module_ready",
+                message: "Module is ready"
+            )
+        )
+    },
+    before: { options in
+        var updated = options
+        updated.dependencies.context["someAdditionalAttribute"] = .string("value")
+        return updated
+    },
+    bucketKey: { options in
+        options.bucketKey
+    },
+    bucketValue: { options in
+        options.bucketValue
     },
     after: { evaluation, _ in
         evaluation
+    },
+    close: {
+        // clean up module resources
     }
 )
 ```
 
-### Registering hooks
+### Registering modules
 
 ```swift
-let f = createInstance(
-    InstanceOptions(
-        hooks: [hook]
+let f = createFeaturevisor(
+    FeaturevisorOptions(
+        modules: [module]
     )
 )
 
-let removeHook = f.addHook(hook)
-removeHook()
+let removeModule = f.addModule(module)
+removeModule?()
 ```
 
 ## Child instance
@@ -469,20 +555,13 @@ f.close()
 
 The package also ships an executable named `featurevisor`.
 
+All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behavior is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
+
 ### Test
 
 ```bash
 swift run featurevisor test \
   --projectDirectoryPath=/path/to/featurevisor-project
-```
-
-With scoped and tagged datafiles:
-
-```bash
-swift run featurevisor test \
-  --projectDirectoryPath=/path/to/featurevisor-project \
-  --with-scopes \
-  --with-tags
 ```
 
 ### Benchmark
@@ -515,6 +594,12 @@ swift run featurevisor assess-distribution \
 
 ```bash
 swift test
+```
+
+To verify against the local Featurevisor example-1 project:
+
+```bash
+make test-example-1
 ```
 
 ## License

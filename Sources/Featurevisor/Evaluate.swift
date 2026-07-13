@@ -2,25 +2,25 @@ import Foundation
 
 public struct EvaluateDependencies: Sendable {
     public var context: Context
-    public var logger: Logger
-    public var hooksManager: HooksManager
-    public var datafileReader: DatafileReader
+    var reportDiagnostic: @Sendable (FeaturevisorDiagnostic) -> Void
+    var modulesManager: ModulesManager
+    var datafileReader: DatafileReader
     public var sticky: StickyFeatures?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
 
-    public init(
+    init(
         context: Context,
-        logger: Logger,
-        hooksManager: HooksManager,
+        reportDiagnostic: @escaping @Sendable (FeaturevisorDiagnostic) -> Void,
+        modulesManager: ModulesManager,
         datafileReader: DatafileReader,
         sticky: StickyFeatures? = nil,
         defaultVariationValue: VariationValue? = nil,
         defaultVariableValue: VariableValue? = nil
     ) {
         self.context = context
-        self.logger = logger
-        self.hooksManager = hooksManager
+        self.reportDiagnostic = reportDiagnostic
+        self.modulesManager = modulesManager
         self.datafileReader = datafileReader
         self.sticky = sticky
         self.defaultVariationValue = defaultVariationValue
@@ -34,7 +34,7 @@ public struct EvaluateOptions: Sendable {
     public var variableKey: VariableKey?
     public var dependencies: EvaluateDependencies
 
-    public init(type: EvaluationType, featureKey: FeatureKey, variableKey: VariableKey? = nil, dependencies: EvaluateDependencies) {
+    init(type: EvaluationType, featureKey: FeatureKey, variableKey: VariableKey? = nil, dependencies: EvaluateDependencies) {
         self.type = type
         self.featureKey = featureKey
         self.variableKey = variableKey
@@ -42,17 +42,13 @@ public struct EvaluateOptions: Sendable {
     }
 }
 
-public func evaluateWithHooks(_ options: EvaluateOptions) -> Evaluation {
-    var input = EvaluateInput(
-        type: options.type,
-        featureKey: options.featureKey,
-        variableKey: options.variableKey,
-        context: options.dependencies.context
-    )
-
-    input = options.dependencies.hooksManager.runBefore(input)
+func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     var updated = options
-    updated.dependencies.context = input.context
+    for module in updated.dependencies.modulesManager.getAll() {
+        if let before = module.before {
+            updated = before(updated)
+        }
+    }
 
     var evaluation = evaluate(updated)
 
@@ -66,17 +62,23 @@ public func evaluateWithHooks(_ options: EvaluateOptions) -> Evaluation {
         evaluation.variableValue = defaultVariable
     }
 
-    return updated.dependencies.hooksManager.runAfter(evaluation, input: input)
+    for module in updated.dependencies.modulesManager.getAll() {
+        if let after = module.after {
+            evaluation = after(evaluation, updated)
+        }
+    }
+
+    return evaluation
 }
 
-public func evaluate(_ options: EvaluateOptions) -> Evaluation {
+func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let type = options.type
     let featureKey = options.featureKey
     let variableKey = options.variableKey
     let context = options.dependencies.context
     let datafileReader = options.dependencies.datafileReader
-    let hooksManager = options.dependencies.hooksManager
-    let logger = options.dependencies.logger
+    let modulesManager = options.dependencies.modulesManager
+    let reportDiagnostic = options.dependencies.reportDiagnostic
 
     do {
         if type != .flag {
@@ -109,7 +111,12 @@ public func evaluate(_ options: EvaluateOptions) -> Evaluation {
                     }
                 }
 
-                logger.debug("feature is disabled", details: ["featureKey": featureKey])
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .debug,
+                    code: "disabled",
+                    message: "Feature is disabled",
+                    details: ["featureKey": .string(featureKey)]
+                ))
                 return disabled
             }
         }
@@ -139,20 +146,61 @@ public func evaluate(_ options: EvaluateOptions) -> Evaluation {
         }
 
         guard let feature = datafileReader.getFeature(featureKey) else {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "feature_not_found",
+                message: "Feature not found",
+                details: ["featureKey": .string(featureKey)]
+            ))
             return Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
+        }
+
+        if type == .flag, feature.deprecated == true {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "deprecated_feature",
+                message: "Feature is deprecated",
+                details: ["featureKey": .string(featureKey)]
+            ))
         }
 
         var variableSchema: ResolvedVariableSchema?
         if let variableKey {
             variableSchema = feature.variablesSchema?[variableKey]
             if variableSchema == nil {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .warn,
+                    code: "variable_not_found",
+                    message: "Variable schema not found",
+                    details: [
+                        "featureKey": .string(featureKey),
+                        "variableKey": .string(variableKey),
+                    ]
+                ))
                 var out = Evaluation(type: type, featureKey: featureKey, reason: .variableNotFound)
                 out.variableKey = variableKey
                 return out
             }
+            if variableSchema?.deprecated == true {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .warn,
+                    code: "deprecated_variable",
+                    message: "Variable is deprecated",
+                    details: [
+                        "featureKey": .string(featureKey),
+                        "variableKey": .string(variableKey),
+                    ]
+                ))
+            }
         }
 
         if type == .variation, (feature.variations ?? []).isEmpty {
+            reportDiagnostic(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "no_variations",
+                message: "No variations",
+                details: ["featureKey": .string(featureKey)]
+            ))
             return Evaluation(type: type, featureKey: featureKey, reason: .noVariations)
         }
 
@@ -221,8 +269,29 @@ public func evaluate(_ options: EvaluateOptions) -> Evaluation {
         }
 
         let rawBucketKey = getBucketKey(featureKey: featureKey, bucketBy: feature.bucketBy, context: context) ?? featureKey
-        let bucketKey = hooksManager.transformBucketKey(rawBucketKey)
-        let bucketValue = hooksManager.transformBucketValue(getBucketedNumber(bucketKey))
+        var bucketKey = rawBucketKey
+        for module in modulesManager.getAll() {
+            if let transform = module.bucketKey {
+                bucketKey = transform(ConfigureBucketKeyOptions(
+                    featureKey: featureKey,
+                    context: context,
+                    bucketBy: feature.bucketBy,
+                    bucketKey: bucketKey
+                ))
+            }
+        }
+
+        var bucketValue = getBucketedNumber(bucketKey)
+        for module in modulesManager.getAll() {
+            if let transform = module.bucketValue {
+                bucketValue = transform(ConfigureBucketValueOptions(
+                    featureKey: featureKey,
+                    bucketKey: bucketKey,
+                    context: context,
+                    bucketValue: bucketValue
+                ))
+            }
+        }
         let matchedTraffic = datafileReader.getMatchedTraffic(feature.traffic, context: context)
         let matchedAllocation = matchedTraffic.flatMap { datafileReader.getMatchedAllocation($0, bucketValue: bucketValue) }
 

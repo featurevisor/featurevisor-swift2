@@ -12,7 +12,7 @@ struct CLI {
         case "assess-distribution":
             return AssessDistributionCommand().run(options)
         default:
-            print("Learn more at https://featurevisor.com/docs/sdks/go/")
+            print("Learn more at https://featurevisor.com/docs/sdks/swift/")
             return 0
         }
     }

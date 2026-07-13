@@ -1,6 +1,6 @@
 import Foundation
 
-public final class DatafileReader: @unchecked Sendable {
+final class DatafileReader: @unchecked Sendable {
     private var schemaVersion: String
     private var revision: String
     private var segments: [SegmentKey: Segment]
@@ -8,7 +8,7 @@ public final class DatafileReader: @unchecked Sendable {
     private var regexCache: [String: NSRegularExpression] = [:]
     private let logger: Logger
 
-    public init(datafile: DatafileContent, logger: Logger) {
+    init(datafile: DatafileContent, logger: Logger) {
         self.schemaVersion = datafile.schemaVersion
         self.revision = datafile.revision
         self.segments = datafile.segments
@@ -16,11 +16,11 @@ public final class DatafileReader: @unchecked Sendable {
         self.logger = logger
     }
 
-    public func getRevision() -> String { revision }
-    public func getSchemaVersion() -> String { schemaVersion }
-    public func getFeatureKeys() -> [FeatureKey] { Array(features.keys) }
-    public func getFeature(_ key: FeatureKey) -> Feature? { features[key] }
-    public func getSegment(_ key: SegmentKey) -> Segment? {
+    func getRevision() -> String { revision }
+    func getSchemaVersion() -> String { schemaVersion }
+    func getFeatureKeys() -> [FeatureKey] { Array(features.keys) }
+    func getFeature(_ key: FeatureKey) -> Feature? { features[key] }
+    func getSegment(_ key: SegmentKey) -> Segment? {
         guard var segment = segments[key] else { return nil }
         if case .string(let stringified) = segment.conditions,
            let data = stringified.data(using: .utf8),
@@ -31,21 +31,21 @@ public final class DatafileReader: @unchecked Sendable {
         return segment
     }
 
-    public func getVariableKeys(_ featureKey: FeatureKey) -> [String] {
+    func getVariableKeys(_ featureKey: FeatureKey) -> [String] {
         guard let feature = getFeature(featureKey), let schema = feature.variablesSchema else { return [] }
         return Array(schema.keys)
     }
 
-    public func hasVariations(_ featureKey: FeatureKey) -> Bool {
+    func hasVariations(_ featureKey: FeatureKey) -> Bool {
         guard let feature = getFeature(featureKey), let variations = feature.variations else { return false }
         return !variations.isEmpty
     }
 
-    public func allConditionsAreMatched(_ conditions: Condition, context: Context) -> Bool {
+    func allConditionsAreMatched(_ conditions: Condition, context: Context) -> Bool {
         allConditionsMatched(conditions, context: context)
     }
 
-    public func segmentIsMatched(_ segment: Segment, context: Context) -> Bool {
+    func segmentIsMatched(_ segment: Segment, context: Context) -> Bool {
         switch segment.conditions {
         case .tree(let condition):
             return allConditionsAreMatched(condition, context: context)
@@ -58,7 +58,7 @@ public final class DatafileReader: @unchecked Sendable {
         }
     }
 
-    public func allSegmentsAreMatched(_ groupSegments: GroupSegment, context: Context) -> Bool {
+    func allSegmentsAreMatched(_ groupSegments: GroupSegment, context: Context) -> Bool {
         switch groupSegments {
         case .all:
             return true
@@ -80,11 +80,11 @@ public final class DatafileReader: @unchecked Sendable {
         }
     }
 
-    public func getMatchedTraffic(_ traffic: [Traffic], context: Context) -> Traffic? {
+    func getMatchedTraffic(_ traffic: [Traffic], context: Context) -> Traffic? {
         traffic.first(where: { allSegmentsAreMatched($0.segments, context: context) })
     }
 
-    public func getMatchedAllocation(_ traffic: Traffic, bucketValue: Int) -> Allocation? {
+    func getMatchedAllocation(_ traffic: Traffic, bucketValue: Int) -> Allocation? {
         guard let allocations = traffic.allocation else { return nil }
         for item in allocations {
             guard item.range.count == 2 else { continue }
@@ -97,7 +97,7 @@ public final class DatafileReader: @unchecked Sendable {
         return nil
     }
 
-    public func getMatchedForce(_ feature: Feature, context: Context) -> (force: Force?, index: Int?) {
+    func getMatchedForce(_ feature: Feature, context: Context) -> (force: Force?, index: Int?) {
         guard let forces = feature.force else { return (nil, nil) }
 
         for (index, force) in forces.enumerated() {

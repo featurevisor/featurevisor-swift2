@@ -44,7 +44,7 @@ final class ParityBehaviorTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
         XCTAssertTrue(sdk.isEnabled("dependent", ["userId": .string("1")]))
     }
 
@@ -100,7 +100,7 @@ final class ParityBehaviorTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
         XCTAssertEqual(sdk.getVariable("feature", "title", ["userId": .string("1"), "country": .string("de")]), .string("rule-override"))
         XCTAssertEqual(sdk.getVariable("feature", "title", ["userId": .string("1"), "country": .string("nl")]), .string("variation-override"))
         XCTAssertEqual(sdk.getVariable("feature", "title", ["userId": .string("1"), "country": .string("fr")]), .string("variation"))
@@ -128,8 +128,8 @@ final class ParityBehaviorTests: XCTestCase {
             ]
         )
 
-        let hook = Hook(name: "force-bucket", bucketValue: { _ in 50_000 })
-        let sdk = createInstance(InstanceOptions(datafile: datafile, hooks: [hook]))
+        let module = FeaturevisorModule(name: "force-bucket", bucketValue: { _ in 50_000 })
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, modules: [module]))
 
         let evaluation = sdk.evaluateFlag("exp", context: ["userId": .string("1")])
         XCTAssertEqual(evaluation.reason, .outOfRange)
@@ -161,10 +161,9 @@ final class ParityBehaviorTests: XCTestCase {
             ]
         )
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
         XCTAssertEqual(sdk.getVariation("disabled", ["userId": .string("1")]), "off")
         XCTAssertEqual(sdk.getVariable("disabled", "a", ["userId": .string("1")]), .string("A-default"))
         XCTAssertEqual(sdk.getVariable("disabled", "b", ["userId": .string("1")]), .string("B-disabled"))
     }
 }
-

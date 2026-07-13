@@ -28,22 +28,37 @@ struct AssessDistributionCommand {
             return 1
         }
 
+        if options.targets.count > 1 {
+            for target in options.targets {
+                var selected = options
+                selected.targets = [target]
+                if run(selected) != 0 { return 1 }
+            }
+            return 0
+        }
+
+        let target = options.targets.first
+
         guard let datafile = CLIHelpers.buildDatafileJSON(
             projectDirectoryPath: options.projectDirectoryPath,
             environment: options.environment,
-            schemaVersion: options.schemaVersion,
-            inflate: options.inflate
+            inflate: options.inflate,
+            target: target
         ) else {
             return 1
         }
 
-        let sdk = createInstance(InstanceOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
         let baseContext = CLIHelpers.parseContext(options.context)
 
         var flagCounts: [String: Int] = ["enabled": 0, "disabled": 0]
         var variationCounts: [String: Int] = [:]
 
-        print("\nAssessing distribution for feature: \(options.feature)...")
+        print("\nAssess Featurevisor distribution")
+        print("  Feature: \(options.feature)")
+        print("  Environment: \(options.environment)")
+        if let target { print("  Target: \(target)") }
+        print("  Iterations: \(options.n)")
         print("Against context: \(options.context.isEmpty ? "{}" : options.context)")
         print("Running \(options.n) times...")
 

@@ -20,6 +20,7 @@ struct CLIOptions {
     var schemaVersion: String = ""
     var projectDirectoryPath: String = FileManager.default.currentDirectoryPath
     var populateUuid: [String] = []
+    var targets: [String] = []
 }
 
 enum CLIParser {
@@ -55,6 +56,7 @@ enum CLIParser {
             else if let value = read("--schemaVersion=") { opts.schemaVersion = value }
             else if let value = read("--projectDirectoryPath=") { opts.projectDirectoryPath = value }
             else if let value = read("--populateUuid=") { opts.populateUuid.append(value) }
+            else if let value = read("--target="), !opts.targets.contains(value) { opts.targets.append(value) }
         }
 
         return opts
