@@ -43,6 +43,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
   - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
+- [OpenFeature](#openfeature)
 - [CLI usage](#cli-usage)
   - [Test](#test)
   - [Benchmark](#benchmark)
@@ -585,6 +586,51 @@ swift run featurevisor assess-distribution \
   --populateUuid=userId \
   --n=1000
 ```
+
+## OpenFeature
+
+The package exposes `FeaturevisorOpenFeature` as a separate library product. Add both products to targets that use OpenFeature:
+
+```swift
+.product(name: "Featurevisor", package: "featurevisor-swift2"),
+.product(name: "FeaturevisorOpenFeature", package: "featurevisor-swift2")
+```
+
+```swift
+import Featurevisor
+import FeaturevisorOpenFeature
+import OpenFeature
+
+let provider = FeaturevisorOpenFeatureProvider(
+    options: FeaturevisorOptions(datafile: datafile)
+)
+
+await OpenFeatureAPI.shared.setProviderAndWait(
+    provider: provider,
+    initialContext: ImmutableContext(targetingKey: "user-123")
+)
+
+let client = OpenFeatureAPI.shared.getClient()
+let enabled = client.getBooleanValue(
+    key: "checkout",
+    defaultValue: false
+)
+```
+
+Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Lists, structures, and JSON variables use the object resolver.
+
+OpenFeature's targeting key maps to `userId` by default. `targetingKeyField`, `keySeparator`, and `variationKey` can customize the mapping. Call `provider.close()` when the application owns the provider lifecycle and is finished with it.
+
+You can also reuse an existing Featurevisor instance:
+
+```swift
+let featurevisor = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
+let provider = FeaturevisorOpenFeatureProvider(featurevisor: featurevisor)
+```
+
+The caller owns an instance passed this way. Closing the provider does not close it. Call `featurevisor.close()` when every consumer is finished with it. When the provider creates the instance from `options`, the provider owns and closes it. If both are supplied, `featurevisor` takes precedence over `options`.
+
+See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for resolution reasons, errors, metadata, tracking, lifecycle, and providers for other languages.
 
 <!-- FEATUREVISOR_DOCS_END -->
 
