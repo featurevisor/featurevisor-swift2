@@ -14,24 +14,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  swift:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        swift-version: ["6.0.3", "6.2.1"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2.4.0
+        with:
+          swift-version: ${{ matrix.swift-version }}
+
+      - name: Build core SDK
+        run: swift build --target Featurevisor
+
+      - name: Build OpenFeature provider
+        run: swift build --target FeaturevisorOpenFeature
+
+      - name: Test
+        run: swift test
+
+      - name: Test with Thread Sanitizer
+        if: matrix.swift-version == '6.2.1'
+        run: swift test --sanitize=thread
+
+  platforms-and-integration:
     runs-on: macos-latest
     timeout-minutes: 30
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2.4.0
         with:
           swift-version: "6.2.1"
 
-      - name: Build
-        run: swift build
+      - name: Build core SDK for iOS
+        run: swift build --target Featurevisor --triple arm64-apple-ios14.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-core
 
-      - name: Test
-        run: swift test
+      - name: Build OpenFeature provider for iOS
+        run: swift build --target FeaturevisorOpenFeature --triple arm64-apple-ios14.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-openfeature
+
+      - name: Verify clean package consumers
+        run: ./scripts/verify-consumers.sh
 
       - name: Set up Node.js
         uses: actions/setup-node@v6

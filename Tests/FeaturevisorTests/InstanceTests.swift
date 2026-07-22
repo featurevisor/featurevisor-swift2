@@ -1,4 +1,5 @@
 import XCTest
+import Dispatch
 @testable import Featurevisor
 
 final class InstanceTests: XCTestCase {
@@ -45,7 +46,7 @@ final class InstanceTests: XCTestCase {
         let sdk = createFeaturevisor(FeaturevisorOptions(
             logLevel: .debug,
             onDiagnostic: { diagnostic in
-                diagnostics.value.append(diagnostic.code)
+                diagnostics.mutate { $0.append(diagnostic.code) }
             }
         ))
 
@@ -64,7 +65,7 @@ final class InstanceTests: XCTestCase {
         let diagnostics = ConcurrencyBox<[String]>([])
         let sdk = createFeaturevisor(FeaturevisorOptions(
             datafile: datafile,
-            onDiagnostic: { diagnostics.value.append($0.code) }
+            onDiagnostic: { diagnostic in diagnostics.mutate { $0.append(diagnostic.code) } }
         ))
 
         _ = sdk.isEnabled("test", ["userId": .string("123")])
@@ -121,5 +122,43 @@ final class InstanceTests: XCTestCase {
         unsubscribe()
 
         XCTAssertEqual(replaced.value, .bool(true))
+    }
+
+    func testConcurrentEvaluationAndStateUpdatesAreSafe() {
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: TestFixtures.basicDatafile(), logLevel: .fatal))
+        let failures = ConcurrencyBox<[String]>([])
+
+        DispatchQueue.concurrentPerform(iterations: 1_000) { index in
+            if index.isMultiple(of: 10) {
+                sdk.setContext(["iteration": .int(index)])
+                sdk.setSticky(["test": EvaluatedFeature(enabled: true)])
+                var datafile = TestFixtures.basicDatafile()
+                datafile.revision = "\(index)"
+                sdk.setDatafile(datafile, replace: true)
+            } else {
+                if !sdk.isEnabled("test", ["userId": .string("user-\(index)")]) {
+                    failures.mutate { $0.append("flag") }
+                }
+                if sdk.getVariableInteger("test", "count", ["userId": .string("user-\(index)")]) != 2 {
+                    failures.mutate { $0.append("variable") }
+                }
+            }
+        }
+
+        XCTAssertTrue(failures.value.isEmpty)
+    }
+
+    func testConcurrentEventSubscriptionAndDeliveryAreSafe() {
+        let sdk = createFeaturevisor(FeaturevisorOptions(logLevel: .fatal))
+        let delivered = ConcurrencyBox(0)
+
+        DispatchQueue.concurrentPerform(iterations: 500) { index in
+            let unsubscribe = sdk.on(.contextSet) { _ in delivered.mutate { $0 += 1 } }
+            sdk.setContext(["iteration": .int(index)])
+            unsubscribe()
+        }
+
+        XCTAssertGreaterThan(delivered.value, 0)
+        sdk.close()
     }
 }

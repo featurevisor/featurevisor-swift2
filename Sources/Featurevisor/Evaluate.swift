@@ -80,8 +80,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let modulesManager = options.dependencies.modulesManager
     let reportDiagnostic = options.dependencies.reportDiagnostic
 
-    do {
-        if type != .flag {
+    if type != .flag {
             let flagEvaluation = evaluate(EvaluateOptions(type: .flag, featureKey: featureKey, dependencies: options.dependencies))
 
             if flagEvaluation.enabled == false {
@@ -478,12 +477,6 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         out.bucketValue = bucketValue
         out.enabled = false
         return out
-    } catch {
-        var out = Evaluation(type: type, featureKey: featureKey, reason: .error)
-        out.variableKey = variableKey
-        out.error = error.localizedDescription
-        return out
-    }
 }
 
 private func firstMatchedOverrideIndex(overrides: [VariableOverride], context: Context, datafileReader: DatafileReader) -> Int? {

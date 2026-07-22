@@ -16,24 +16,50 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private let targetingKeyField: String
     private let keySeparator: String
     private let variationKey: String
-    private let onTrack: ((String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)?
+    private let onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)?
     private let ownsFeaturevisor: Bool
     private let eventHandler = EventHandler()
+    private let lock = NSLock()
+    private var parseErrorMessage: String?
+    private var errorUnsubscribe: FeaturevisorUnsubscribe?
+    private var datafileUnsubscribe: FeaturevisorUnsubscribe?
+    private var closed = false
 
     public init(
         options: FeaturevisorOptions = FeaturevisorOptions(),
+        datafileJSON: String? = nil,
         featurevisor: Featurevisor? = nil,
         targetingKeyField: String = "userId",
         keySeparator: String = ":",
         variationKey: String = "variation",
-        onTrack: ((String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)? = nil
+        onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)? = nil
     ) {
         self.ownsFeaturevisor = featurevisor == nil
-        self.featurevisor = featurevisor ?? createFeaturevisor(options)
+        var creationOptions = options
+        if featurevisor == nil, datafileJSON != nil { creationOptions.datafile = nil }
+        self.featurevisor = featurevisor ?? createFeaturevisor(creationOptions)
         self.targetingKeyField = targetingKeyField.isEmpty ? "userId" : targetingKeyField
         self.keySeparator = keySeparator.isEmpty ? ":" : keySeparator
         self.variationKey = variationKey.isEmpty ? "variation" : variationKey
         self.onTrack = onTrack
+
+        self.errorUnsubscribe = self.featurevisor.on(.error) { [weak self] payload in
+            guard
+                case .object(let diagnostic)? = payload.params["diagnostic"],
+                diagnostic["code"] == .string("invalid_datafile")
+            else { return }
+            let message = diagnostic["message"]?.asString() ?? "Could not parse datafile"
+            guard let self else { return }
+            self.withLock { self.parseErrorMessage = message }
+        }
+        self.datafileUnsubscribe = self.featurevisor.on(.datafileSet) { [weak self] _ in
+            guard let self else { return }
+            self.withLock { self.parseErrorMessage = nil }
+        }
+
+        if featurevisor == nil, let datafileJSON {
+            self.featurevisor.setDatafile(json: datafileJSON, replace: true)
+        }
     }
 
     public func initialize(initialContext: (any EvaluationContext)?) async throws {}
@@ -45,6 +71,16 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     }
 
     public func close() {
+        let shouldClose = withLock { () -> Bool in
+            guard !closed else { return false }
+            closed = true
+            return true
+        }
+        guard shouldClose else { return }
+        errorUnsubscribe?()
+        datafileUnsubscribe?()
+        errorUnsubscribe = nil
+        datafileUnsubscribe = nil
         if ownsFeaturevisor { featurevisor.close() }
     }
 
@@ -75,6 +111,14 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private enum ExpectedType { case boolean, string, integer, number, object }
 
     private func resolve(key: String, defaultValue: AnyValue, context: (any EvaluationContext)?, expected: ExpectedType) -> ProviderEvaluation<AnyValue> {
+        if let message = withLock({ parseErrorMessage }) {
+            return ProviderEvaluation(
+                value: defaultValue,
+                reason: Reason.error.rawValue,
+                errorCode: .parseError,
+                errorMessage: message
+            )
+        }
         let parts = splitKey(key)
         let fvContext = featurevisorContext(context)
         let evaluation: Evaluation
@@ -194,7 +238,8 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
 
     private func matches(_ value: AnyValue, _ expected: ExpectedType) -> Bool {
         switch (value, expected) {
-        case (.bool, .boolean), (.string, .string), (.int, .integer), (.int, .number), (.double, .number), (.array, .object), (.object, .object): return true
+        case (.bool, .boolean), (.string, .string), (.int, .integer), (.int, .number), (.array, .object), (.object, .object): return true
+        case (.double(let value), .number): return value.isFinite
         default: return false
         }
     }
@@ -205,5 +250,11 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
 
     private func typed<T>(_ source: ProviderEvaluation<AnyValue>, fallback: T, convert: (AnyValue) -> T?) -> ProviderEvaluation<T> {
         ProviderEvaluation(value: convert(source.value) ?? fallback, flagMetadata: source.flagMetadata, variant: source.variant, reason: source.reason, errorCode: source.errorCode, errorMessage: source.errorMessage)
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }

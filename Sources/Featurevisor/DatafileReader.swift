@@ -1,19 +1,19 @@
 import Foundation
 
 final class DatafileReader: @unchecked Sendable {
-    private var schemaVersion: String
-    private var revision: String
-    private var segments: [SegmentKey: Segment]
-    private var features: [FeatureKey: Feature]
-    private var regexCache: [String: NSRegularExpression] = [:]
-    private let logger: Logger
+    private let schemaVersion: String
+    private let revision: String
+    private let segments: [SegmentKey: Segment]
+    private let features: [FeatureKey: Feature]
+    private var parsedSegments: [SegmentKey: Segment] = [:]
+    private let lock = FeaturevisorLock()
 
     init(datafile: DatafileContent, logger: Logger) {
         self.schemaVersion = datafile.schemaVersion
         self.revision = datafile.revision
         self.segments = datafile.segments
         self.features = datafile.features
-        self.logger = logger
+        _ = logger
     }
 
     func getRevision() -> String { revision }
@@ -21,12 +21,13 @@ final class DatafileReader: @unchecked Sendable {
     func getFeatureKeys() -> [FeatureKey] { Array(features.keys) }
     func getFeature(_ key: FeatureKey) -> Feature? { features[key] }
     func getSegment(_ key: SegmentKey) -> Segment? {
+        if let cached = lock.withLock({ parsedSegments[key] }) { return cached }
         guard var segment = segments[key] else { return nil }
         if case .string(let stringified) = segment.conditions,
            let data = stringified.data(using: .utf8),
            let decoded = try? JSONDecoder().decode(Condition.self, from: data) {
             segment.conditions = .tree(decoded)
-            segments[key] = segment
+            lock.withLock { parsedSegments[key] = segment }
         }
         return segment
     }

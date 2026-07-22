@@ -59,7 +59,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 In your Swift application, add this package using Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "0.1.0")
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "1.1.0")
 ```
 
 Then add the product dependency:
@@ -79,6 +79,8 @@ let f: Featurevisor = createFeaturevisor(
 ```
 
 Most applications only need `createFeaturevisor`, `Featurevisor`, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
+
+The SDK supports iOS 14, macOS 11, tvOS 14, and watchOS 7 or newer. Shared `Featurevisor`, child instance, and OpenFeature provider state is safe to use from concurrent callers. Module, diagnostic, event, and tracking callbacks are `@Sendable`; callback implementations must synchronize any mutable state they capture.
 
 ## Initialization
 
@@ -589,11 +591,19 @@ swift run featurevisor assess-distribution \
 
 ## OpenFeature
 
-The package exposes `FeaturevisorOpenFeature` as a separate library product. Add both products to targets that use OpenFeature:
+The package exposes `FeaturevisorOpenFeature` as a separate library product. Targets using it should declare both package dependencies:
+
+```swift
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "1.1.0"),
+.package(url: "https://github.com/open-feature/swift-sdk.git", from: "0.5.0")
+```
+
+Then add the products needed by that target:
 
 ```swift
 .product(name: "Featurevisor", package: "featurevisor-swift2"),
-.product(name: "FeaturevisorOpenFeature", package: "featurevisor-swift2")
+.product(name: "FeaturevisorOpenFeature", package: "featurevisor-swift2"),
+.product(name: "OpenFeature", package: "swift-sdk")
 ```
 
 ```swift
@@ -619,7 +629,28 @@ let enabled = client.getBooleanValue(
 
 Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Lists, structures, and JSON variables use the object resolver.
 
+The provider maps Featurevisor values to OpenFeature resolvers as follows:
+
+| Key | Resolver |
+| --- | --- |
+| `feature` | Boolean flag |
+| `feature:variation` | String variation |
+| `feature:variable` | Resolver matching the variable schema |
+
+Integer variables can be resolved with either the integer or double resolver. Non-finite doubles are rejected with `TYPE_MISMATCH`. Invalid JSON variables also return `TYPE_MISMATCH` and the caller's default value.
+
 OpenFeature's targeting key maps to `userId` by default. `targetingKeyField`, `keySeparator`, and `variationKey` can customize the mapping. Call `provider.close()` when the application owns the provider lifecycle and is finished with it.
+
+You can initialize the provider from raw JSON when the application has not decoded a datafile yet:
+
+```swift
+let provider = FeaturevisorOpenFeatureProvider(
+    options: FeaturevisorOptions(logLevel: .warn),
+    datafileJSON: json
+)
+```
+
+Malformed JSON returns the OpenFeature `PARSE_ERROR` code with `Could not parse datafile`. The provider keeps returning that error until a valid datafile is set through `provider.featurevisor.setDatafile(...)`. Successful replacement clears the parse error.
 
 You can also reuse an existing Featurevisor instance:
 
@@ -629,6 +660,23 @@ let provider = FeaturevisorOpenFeatureProvider(featurevisor: featurevisor)
 ```
 
 The caller owns an instance passed this way. Closing the provider does not close it. Call `featurevisor.close()` when every consumer is finished with it. When the provider creates the instance from `options`, the provider owns and closes it. If both are supplied, `featurevisor` takes precedence over `options`.
+
+Featurevisor evaluation reasons map to OpenFeature reasons:
+
+| Featurevisor reason | OpenFeature reason |
+| --- | --- |
+| `required`, `forced`, `sticky`, `rule`, variable overrides | `TARGETING_MATCH` |
+| `allocated` | `SPLIT` |
+| disabled flag, variation, or variable | `DISABLED` |
+| no match, out of range, variable default | `DEFAULT` |
+| missing feature, variable, or variations | `ERROR` with `FLAG_NOT_FOUND` |
+| evaluation error | `ERROR` with `GENERAL` |
+
+Resolution metadata includes `featureKey`, `featurevisorReason`, `schemaVersion`, and `revision`. It also includes `variableKey`, `ruleKey`, `bucketKey`, `bucketValue`, `forceIndex`, and `variableOverrideIndex` when those values are available. Variation resolutions populate OpenFeature's `variant` field.
+
+The provider forwards OpenFeature tracking calls to `onTrack`. Closing a provider it owns closes Featurevisor modules and subscriptions. Closing a provider created with a caller-owned Featurevisor instance only removes provider subscriptions.
+
+The base `Featurevisor` product does not compile or link OpenFeature provider code into an application target. Swift Package Manager still resolves the package-level `swift-sdk` dependency because both products share one package manifest. Projects that require dependency-download isolation would need the provider in a separate repository.
 
 See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for resolution reasons, errors, metadata, tracking, lifecycle, and providers for other languages.
 
@@ -647,6 +695,14 @@ To verify against the local Featurevisor example-1 project:
 ```bash
 make test-example-1
 ```
+
+To verify the public products from clean consumer packages:
+
+```bash
+./scripts/verify-consumers.sh
+```
+
+Release tags use semantic versions such as `v1.1.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
 
 ## License
 

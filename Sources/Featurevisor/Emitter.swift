@@ -21,26 +21,39 @@ final class Emitter: @unchecked Sendable {
     }
 
     private var listeners: [EventName: [Listener]] = [:]
+    private let lock = FeaturevisorLock()
+    private var closed = false
 
     public init() {}
 
     @discardableResult
     public func on(_ eventName: EventName, callback: @escaping EventCallback) -> () -> Void {
         let id = UUID()
-        listeners[eventName, default: []].append(Listener(id: id, callback: callback))
+        let added = lock.withLock { () -> Bool in
+            guard !closed else { return false }
+            listeners[eventName, default: []].append(Listener(id: id, callback: callback))
+            return true
+        }
+        guard added else { return {} }
         return { [weak self] in
-            self?.listeners[eventName]?.removeAll(where: { $0.id == id })
+            guard let self else { return }
+            self.lock.withLock {
+                self.listeners[eventName]?.removeAll(where: { $0.id == id })
+            }
         }
     }
 
     public func trigger(_ eventName: EventName, payload: EventPayload = EventPayload()) {
-        let callbacks = listeners[eventName]?.map { $0.callback } ?? []
+        let callbacks = lock.withLock { closed ? [] : listeners[eventName]?.map { $0.callback } ?? [] }
         for callback in callbacks {
             callback(payload)
         }
     }
 
     public func clearAll() {
-        listeners.removeAll()
+        lock.withLock {
+            closed = true
+            listeners.removeAll()
+        }
     }
 }

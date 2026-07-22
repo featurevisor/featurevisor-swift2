@@ -1,6 +1,7 @@
 import Foundation
 
 public final class FeaturevisorChildInstance: @unchecked Sendable {
+    private let lock = FeaturevisorLock()
     private let parent: Featurevisor
     private var context: Context
     private var sticky: StickyFeatures?
@@ -13,24 +14,22 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     }
 
     public func getContext(_ context: Context? = nil) -> Context {
-        guard let context else { return self.context }
-        return self.context.merging(context, uniquingKeysWith: { _, new in new })
+        lock.withLock {
+            guard let context else { return self.context }
+            return self.context.merging(context, uniquingKeysWith: { _, new in new })
+        }
     }
 
     public func setContext(_ context: Context, replace: Bool = false) {
-        if replace {
-            self.context = context
-        } else {
-            self.context = self.context.merging(context, uniquingKeysWith: { _, new in new })
+        lock.withLock {
+            self.context = replace ? context : self.context.merging(context, uniquingKeysWith: { _, new in new })
         }
         emitter.trigger(.contextSet)
     }
 
     public func setSticky(_ sticky: StickyFeatures, replace: Bool = false) {
-        if replace {
-            self.sticky = sticky
-        } else {
-            self.sticky = (self.sticky ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
+        lock.withLock {
+            self.sticky = replace ? sticky : (self.sticky ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
         }
         emitter.trigger(.stickySet)
     }
@@ -52,7 +51,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )
-        merged.sticky = sticky
+        merged.sticky = lock.withLock { sticky }
         return merged
     }
 

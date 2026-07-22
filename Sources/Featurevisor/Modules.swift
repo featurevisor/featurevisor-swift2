@@ -85,6 +85,8 @@ public struct FeaturevisorModule: Sendable {
 
 final class ModulesManager: @unchecked Sendable {
     private var modules: [FeaturevisorModule] = []
+    private let lock = FeaturevisorLock()
+    private var closed = false
     private let reportDiagnostic: @Sendable (FeaturevisorDiagnostic, FeaturevisorModule?) -> Void
     private let getModuleApi: @Sendable (FeaturevisorModule) -> FeaturevisorModuleApi
     private let clearModuleDiagnosticSubscriptions: @Sendable (FeaturevisorModule) -> Void
@@ -106,26 +108,35 @@ final class ModulesManager: @unchecked Sendable {
 
     @discardableResult
     public func add(_ module: FeaturevisorModule) -> FeaturevisorUnsubscribe? {
-        if let name = module.name, modules.contains(where: { $0.name == name }) {
+        let result = lock.withLock { () -> (added: Bool, duplicate: Bool) in
+            guard !closed else { return (false, false) }
+            if let name = module.name, modules.contains(where: { $0.name == name }) { return (false, true) }
+            modules.append(module)
+            return (true, false)
+        }
+        if result.duplicate {
             reportDiagnostic(
                 FeaturevisorDiagnostic(
                     level: .error,
                     code: "duplicate_module",
                     message: "Duplicate module name",
-                    moduleName: name
+                    moduleName: module.name
                 ),
                 nil
             )
             return nil
         }
+        guard result.added else { return nil }
 
         module.setup?(getModuleApi(module))
-        modules.append(module)
 
         return { [weak self] in
             guard let self else { return }
-            let existed = self.modules.contains(where: { $0.id == module.id })
-            self.modules.removeAll(where: { $0.id == module.id })
+            let existed = self.lock.withLock {
+                let existed = self.modules.contains(where: { $0.id == module.id })
+                self.modules.removeAll(where: { $0.id == module.id })
+                return existed
+            }
             self.clearModuleDiagnosticSubscriptions(module)
             if existed {
                 self.closeModule(module)
@@ -134,8 +145,11 @@ final class ModulesManager: @unchecked Sendable {
     }
 
     public func remove(_ name: String) {
-        let removed = modules.filter { $0.name == name }
-        modules.removeAll(where: { $0.name == name })
+        let removed = lock.withLock {
+            let removed = modules.filter { $0.name == name }
+            modules.removeAll(where: { $0.name == name })
+            return removed
+        }
         for module in removed {
             clearModuleDiagnosticSubscriptions(module)
             closeModule(module)
@@ -143,12 +157,16 @@ final class ModulesManager: @unchecked Sendable {
     }
 
     public func getAll() -> [FeaturevisorModule] {
-        modules
+        lock.withLock { modules }
     }
 
     public func closeAll() {
-        let existing = modules
-        modules = []
+        let existing = lock.withLock {
+            closed = true
+            let existing = modules
+            modules = []
+            return existing
+        }
 
         for module in existing {
             clearModuleDiagnosticSubscriptions(module)
