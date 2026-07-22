@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   swift:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -26,10 +26,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.2"
+
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2.4.0
         with:
           swift-version: ${{ matrix.swift-version }}
+
+      - name: Show toolchain versions
+        run: |
+          swift --version
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
 
       - name: Build core SDK
         run: swift build --target Featurevisor
@@ -42,20 +53,33 @@ jobs:
 
       - name: Test with Thread Sanitizer
         if: matrix.swift-version == '6.2.1'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
         run: swift test --sanitize=thread
 
   platforms-and-integration:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 30
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.2"
+
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2.4.0
         with:
           swift-version: "6.2.1"
+
+      - name: Show toolchain versions
+        run: |
+          swift --version
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
 
       - name: Build core SDK for iOS
         run: swift build --target Featurevisor --triple arm64-apple-ios14.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-core
