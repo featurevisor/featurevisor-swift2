@@ -35,6 +35,7 @@ private struct ModuleDiagnosticSubscription: Sendable {
 }
 
 public final class Featurevisor: @unchecked Sendable {
+    private let lock = FeaturevisorLock()
     private var context: Context
     private let logger: Logger
     private var logLevel: LogLevel
@@ -95,23 +96,25 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     public func setLogLevel(_ level: LogLevel) {
-        logLevel = level
+        lock.withLock { logLevel = level }
         logger.setLevel(level)
     }
 
     public func setDatafile(_ datafile: DatafileContent, replace: Bool = false) {
-        guard !closed else { return }
-
-        let storedDatafile = replace ? datafile : mergeStoredDatafile(existing: self.datafile, incoming: datafile)
-        let newDatafileReader = DatafileReader(datafile: storedDatafile, logger: logger)
-        let details = getParamsForDatafileSetEvent(
-            previousDatafileReader: datafileReader,
-            newDatafileReader: newDatafileReader,
-            replace: replace
-        )
-
-        self.datafile = storedDatafile
-        self.datafileReader = newDatafileReader
+        let result = lock.withLock { () -> [String: AnyValue]? in
+            guard !closed else { return nil }
+            let storedDatafile = replace ? datafile : mergeStoredDatafile(existing: self.datafile, incoming: datafile)
+            let newDatafileReader = DatafileReader(datafile: storedDatafile, logger: logger)
+            let details = getParamsForDatafileSetEvent(
+                previousDatafileReader: datafileReader,
+                newDatafileReader: newDatafileReader,
+                replace: replace
+            )
+            self.datafile = storedDatafile
+            self.datafileReader = newDatafileReader
+            return details
+        }
+        guard let details = result else { return }
 
         reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "datafile_set", message: "Datafile set", details: details))
         emitter.trigger(.datafileSet, payload: EventPayload(details))
@@ -131,54 +134,59 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     public func setSticky(_ sticky: StickyFeatures, replace: Bool = false) {
-        guard !closed else { return }
-
-        let previousSticky = self.sticky ?? [:]
-        if replace {
-            self.sticky = sticky
-        } else {
-            self.sticky = (self.sticky ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
+        let values = lock.withLock { () -> (StickyFeatures, StickyFeatures)? in
+            guard !closed else { return nil }
+            let previous = self.sticky ?? [:]
+            self.sticky = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            return (previous, self.sticky ?? [:])
         }
-        let payload = getParamsForStickySetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: self.sticky ?? [:], replace: replace)
+        guard let (previousSticky, newSticky) = values else { return }
+        let payload = getParamsForStickySetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: newSticky, replace: replace)
         reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "sticky_set", message: "Sticky features set", details: payload))
         emitter.trigger(.stickySet, payload: EventPayload(payload))
     }
 
-    public func getRevision() -> String { datafileReader.getRevision() }
-    public func getSchemaVersion() -> String { datafileReader.getSchemaVersion() }
-    public func getSegment(_ segmentKey: SegmentKey) -> Segment? { datafileReader.getSegment(segmentKey) }
-    public func getFeature(_ featureKey: String) -> Feature? { datafileReader.getFeature(featureKey) }
-    public func getFeatureKeys() -> [FeatureKey] { datafileReader.getFeatureKeys() }
-    public func getVariableKeys(_ featureKey: FeatureKey) -> [String] { datafileReader.getVariableKeys(featureKey) }
-    public func hasVariations(_ featureKey: FeatureKey) -> Bool { datafileReader.hasVariations(featureKey) }
+    private func reader() -> DatafileReader { lock.withLock { datafileReader } }
+    public func getRevision() -> String { reader().getRevision() }
+    public func getSchemaVersion() -> String { reader().getSchemaVersion() }
+    public func getSegment(_ segmentKey: SegmentKey) -> Segment? { reader().getSegment(segmentKey) }
+    public func getFeature(_ featureKey: String) -> Feature? { reader().getFeature(featureKey) }
+    public func getFeatureKeys() -> [FeatureKey] { reader().getFeatureKeys() }
+    public func getVariableKeys(_ featureKey: FeatureKey) -> [String] { reader().getVariableKeys(featureKey) }
+    public func hasVariations(_ featureKey: FeatureKey) -> Bool { reader().hasVariations(featureKey) }
 
     @discardableResult
     public func addModule(_ module: FeaturevisorModule) -> FeaturevisorUnsubscribe? {
-        guard !closed else { return nil }
+        guard lock.withLock({ !closed }) else { return nil }
         return modulesManager.add(module)
     }
 
     public func removeModule(_ name: String) {
-        guard !closed else { return }
+        guard lock.withLock({ !closed }) else { return }
         modulesManager.remove(name)
     }
 
     @discardableResult
     public func on(_ eventName: EventName, callback: @escaping EventCallback) -> FeaturevisorUnsubscribe {
-        guard !closed else { return {} }
+        guard lock.withLock({ !closed }) else { return {} }
         return emitter.on(eventName, callback: callback)
     }
 
     public func close() {
-        guard !closed else { return }
-        closed = true
+        let shouldClose = lock.withLock { () -> Bool in
+            guard !closed else { return false }
+            closed = true
+            moduleDiagnosticSubscriptions = []
+            return true
+        }
+        guard shouldClose else { return }
         modulesManager.closeAll()
-        moduleDiagnosticSubscriptions = []
         emitter.clearAll()
     }
 
     private func reportDiagnostic(_ diagnostic: FeaturevisorDiagnostic, sourceModule: FeaturevisorModule? = nil) {
-        for subscription in moduleDiagnosticSubscriptions {
+        let snapshot = lock.withLock { (moduleDiagnosticSubscriptions, logLevel, onDiagnostic) }
+        for subscription in snapshot.0 {
             if let sourceModule, subscription.moduleID == sourceModule.id {
                 continue
             }
@@ -187,8 +195,8 @@ public final class Featurevisor: @unchecked Sendable {
             }
         }
 
-        if shouldLogDiagnostic(currentLevel: logLevel, diagnosticLevel: diagnostic.level) {
-            if let onDiagnostic {
+        if shouldLogDiagnostic(currentLevel: snapshot.1, diagnosticLevel: diagnostic.level) {
+            if let onDiagnostic = snapshot.2 {
                 onDiagnostic(diagnostic)
             } else {
                 var details = diagnostic.details.mapValues { String(describing: $0.rawValue) }
@@ -228,10 +236,18 @@ public final class Featurevisor: @unchecked Sendable {
                     handler: handler,
                     logLevel: options.logLevel
                 )
-                self.moduleDiagnosticSubscriptions.append(subscription)
+                let added = self.lock.withLock { () -> Bool in
+                    guard !self.closed else { return false }
+                    self.moduleDiagnosticSubscriptions.append(subscription)
+                    return true
+                }
+                guard added else { return {} }
 
                 return { [weak self] in
-                    self?.moduleDiagnosticSubscriptions.removeAll(where: { $0.id == subscription.id })
+                    guard let self else { return }
+                    self.lock.withLock {
+                        self.moduleDiagnosticSubscriptions.removeAll(where: { $0.id == subscription.id })
+                    }
                 }
             },
             reportDiagnostic: { [weak self] diagnostic in
@@ -245,19 +261,18 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     private func clearModuleDiagnosticSubscriptions(_ module: FeaturevisorModule) {
-        moduleDiagnosticSubscriptions.removeAll(where: { $0.moduleID == module.id })
+        lock.withLock { moduleDiagnosticSubscriptions.removeAll(where: { $0.moduleID == module.id }) }
     }
 
     public func setContext(_ context: Context, replace: Bool = false) {
-        guard !closed else { return }
-
-        if replace {
-            self.context = context
-        } else {
-            self.context = self.context.merging(context, uniquingKeysWith: { _, new in new })
+        let newContext = lock.withLock { () -> Context? in
+            guard !closed else { return nil }
+            self.context = replace ? context : self.context.merging(context, uniquingKeysWith: { _, new in new })
+            return self.context
         }
+        guard let newContext else { return }
         emitter.trigger(.contextSet, payload: EventPayload([
-            "context": .object(self.context),
+            "context": .object(newContext),
             "replaced": .bool(replace),
         ]))
         reportDiagnostic(FeaturevisorDiagnostic(
@@ -265,15 +280,17 @@ public final class Featurevisor: @unchecked Sendable {
             code: "context_set",
             message: replace ? "Context replaced" : "Context updated",
             details: [
-                "context": .object(self.context),
+                "context": .object(newContext),
                 "replaced": .bool(replace),
             ]
         ))
     }
 
     public func getContext(_ context: Context? = nil) -> Context {
-        guard let context else { return self.context }
-        return self.context.merging(context, uniquingKeysWith: { _, new in new })
+        lock.withLock {
+            guard let context else { return self.context }
+            return self.context.merging(context, uniquingKeysWith: { _, new in new })
+        }
     }
 
     public func spawn(_ context: Context = [:], options: SpawnOptions = SpawnOptions()) -> FeaturevisorChildInstance {
@@ -281,14 +298,21 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     private func dependencies(_ context: Context, options: OverrideOptions = OverrideOptions()) -> EvaluateDependencies {
-        EvaluateDependencies(
-            context: getContext(context),
+        let snapshot = lock.withLock {
+            (
+                self.context.merging(context, uniquingKeysWith: { _, new in new }),
+                datafileReader,
+                options.sticky ?? sticky
+            )
+        }
+        return EvaluateDependencies(
+            context: snapshot.0,
             reportDiagnostic: { [weak self] diagnostic in
                 self?.reportDiagnostic(diagnostic)
             },
             modulesManager: modulesManager,
-            datafileReader: datafileReader,
-            sticky: options.sticky ?? sticky,
+            datafileReader: snapshot.1,
+            sticky: snapshot.2,
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )
@@ -355,12 +379,13 @@ public final class Featurevisor: @unchecked Sendable {
 
     public func getAllEvaluations(_ context: Context = [:], _ featureKeys: [FeatureKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedFeatures {
         var result: EvaluatedFeatures = [:]
-        let targetKeys = featureKeys.isEmpty ? datafileReader.getFeatureKeys() : featureKeys
+        let reader = reader()
+        let targetKeys = featureKeys.isEmpty ? reader.getFeatureKeys() : featureKeys
         for key in targetKeys {
             let enabled = isEnabled(key, context, options)
             let variation = getVariation(key, context, options)
             var variables: [VariableKey: VariableValue] = [:]
-            for variableKey in datafileReader.getVariableKeys(key) {
+            for variableKey in reader.getVariableKeys(key) {
                 if let value = getVariable(key, variableKey, context, options) {
                     variables[variableKey] = value
                 }

@@ -15,6 +15,7 @@ final class Logger: @unchecked Sendable {
 
     private var level: LogLevel
     private var handler: LogHandler?
+    private let lock = FeaturevisorLock()
 
     init(level: LogLevel = Logger.defaultLevel, handler: LogHandler? = nil) {
         self.level = level
@@ -22,11 +23,11 @@ final class Logger: @unchecked Sendable {
     }
 
     func setLevel(_ level: LogLevel) {
-        self.level = level
+        lock.withLock { self.level = level }
     }
 
     func setHandler(_ handler: LogHandler?) {
-        self.handler = handler
+        lock.withLock { self.handler = handler }
     }
 
     static func writeToConsole(_ level: LogLevel, _ message: String, _ details: [String: String]) {
@@ -34,13 +35,10 @@ final class Logger: @unchecked Sendable {
         FileHandle.standardError.write(Data("[Featurevisor] \(message)\(serialized)\n".utf8))
     }
 
-    private func shouldLog(_ incoming: LogLevel) -> Bool {
-        incoming.rawValue >= level.rawValue
-    }
-
     private func emit(_ incoming: LogLevel, _ message: String, _ details: [String: String]) {
-        guard shouldLog(incoming) else { return }
-        if let handler {
+        let snapshot = lock.withLock { (incoming.rawValue >= self.level.rawValue, self.handler) }
+        guard snapshot.0 else { return }
+        if let handler = snapshot.1 {
             handler(incoming, message, details)
             return
         }
