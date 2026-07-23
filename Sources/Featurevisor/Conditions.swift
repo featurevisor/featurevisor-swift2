@@ -9,8 +9,6 @@ private func anyValueEquals(_ lhs: AnyValue, _ rhs: AnyValue) -> Bool {
     case (.double(let l), .int(let r)): return l == Double(r)
     case (.bool(let l), .bool(let r)): return l == r
     case (.null, .null): return true
-    case (.array(let l), .array(let r)): return l == r
-    case (.object(let l), .object(let r)): return l == r
     default: return false
     }
 }
@@ -33,12 +31,31 @@ private func toDouble(_ value: AnyValue?) -> Double? {
     switch value {
     case .int(let int): return Double(int)
     case .double(let double): return double
-    case .string(let string): return Double(string)
     default: return nil
     }
 }
 
-public func conditionIsMatched(_ condition: ConditionPredicate, context: Context) -> Bool {
+typealias FeaturevisorRegexProvider = (_ pattern: String, _ flags: String?) throws -> NSRegularExpression
+
+private func parseISO8601Date(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) {
+        return date
+    }
+
+    return ISO8601DateFormatter().date(from: value)
+}
+
+private func uncachedRegex(_ pattern: String, _ flags: String?) throws -> NSRegularExpression {
+    try NSRegularExpression(pattern: pattern, options: try regexOptions(flags))
+}
+
+private func conditionIsMatchedThrowing(
+    _ condition: ConditionPredicate,
+    context: Context,
+    getRegex: FeaturevisorRegexProvider
+) throws -> Bool {
     let attr = resolvePath(context, condition.attribute)
     let op = condition.operator
     let expected = condition.value
@@ -46,8 +63,9 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     switch op {
     case "before", "after":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        guard let leftDate = ISO8601DateFormatter().date(from: current) ?? DateFormatter.featurevisorFallback.date(from: current),
-              let rightDate = ISO8601DateFormatter().date(from: target) ?? DateFormatter.featurevisorFallback.date(from: target) else {
+        guard hasExplicitTimezone(current), hasExplicitTimezone(target),
+              let leftDate = parseISO8601Date(current),
+              let rightDate = parseISO8601Date(target) else {
             return false
         }
         return op == "before" ? leftDate < rightDate : leftDate > rightDate
@@ -55,7 +73,8 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
         guard let attr, let expected else { return false }
         return anyValueEquals(attr, expected)
     case "notEquals":
-        guard let attr, let expected else { return false }
+        guard let attr else { return true }
+        guard let expected else { return true }
         return !anyValueEquals(attr, expected)
     case "exists":
         return attr != nil
@@ -64,12 +83,10 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
     case "includes":
         guard let attr, let expected else { return false }
         if case .array(let values) = attr { return values.contains(where: { anyValueEquals($0, expected) }) }
-        if case .string(let value) = attr, case .string(let substring) = expected { return value.contains(substring) }
         return false
     case "notIncludes":
         guard let attr, let expected else { return false }
         if case .array(let values) = attr { return !values.contains(where: { anyValueEquals($0, expected) }) }
-        if case .string(let value) = attr, case .string(let substring) = expected { return !value.contains(substring) }
         return false
     case "in":
         guard let attr, let expected, case .array(let expectedValues) = expected else { return false }
@@ -111,82 +128,112 @@ public func conditionIsMatched(_ condition: ConditionPredicate, context: Context
         return l <= r
     case "semverEquals":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        return compareVersions(current, target) == .equal
+        return try compareVersions(current, target) == .equal
     case "semverNotEquals":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        return compareVersions(current, target) != .equal
+        return try compareVersions(current, target) != .equal
     case "semverGreaterThan":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        return compareVersions(current, target) == .greaterThan
+        return try compareVersions(current, target) == .greaterThan
     case "semverGreaterThanOrEquals":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        let result = compareVersions(current, target)
+        let result = try compareVersions(current, target)
         return result == .greaterThan || result == .equal
     case "semverLessThan":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        return compareVersions(current, target) == .lessThan
+        return try compareVersions(current, target) == .lessThan
     case "semverLessThanOrEquals":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
-        let result = compareVersions(current, target)
+        let result = try compareVersions(current, target)
         return result == .lessThan || result == .equal
     case "matches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
-        do {
-            let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(condition.regexFlags))
-            let range = NSRange(location: 0, length: current.utf16.count)
-            return regex.firstMatch(in: current, options: [], range: range) != nil
-        } catch {
-            return false
-        }
+        let regex = try getRegex(pattern, condition.regexFlags)
+        let range = NSRange(location: 0, length: current.utf16.count)
+        return regex.firstMatch(in: current, options: [], range: range) != nil
     case "notMatches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
-        do {
-            let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(condition.regexFlags))
-            let range = NSRange(location: 0, length: current.utf16.count)
-            return regex.firstMatch(in: current, options: [], range: range) == nil
-        } catch {
-            return false
-        }
+        let regex = try getRegex(pattern, condition.regexFlags)
+        let range = NSRange(location: 0, length: current.utf16.count)
+        return regex.firstMatch(in: current, options: [], range: range) == nil
     default:
         return false
     }
 }
 
-private func regexOptions(_ flags: String?) -> NSRegularExpression.Options {
+func conditionIsMatched(_ condition: ConditionPredicate, context: Context) -> Bool {
+    (try? conditionIsMatchedThrowing(condition, context: context, getRegex: uncachedRegex)) ?? false
+}
+
+func regexOptions(_ flags: String?) throws -> NSRegularExpression.Options {
     guard let flags else { return [] }
     var options: NSRegularExpression.Options = []
     if flags.contains("i") { options.insert(.caseInsensitive) }
     if flags.contains("m") { options.insert(.anchorsMatchLines) }
     if flags.contains("s") { options.insert(.dotMatchesLineSeparators) }
-    if flags.contains("x") { options.insert(.allowCommentsAndWhitespace) }
+    if flags.contains(where: { !"gimsuy".contains($0) }) {
+        throw NSError(
+            domain: "Featurevisor",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Invalid regular expression flags: \(flags)"]
+        )
+    }
     return options
 }
 
-private extension DateFormatter {
-    static let featurevisorFallback: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter
-    }()
+private func hasExplicitTimezone(_ value: String) -> Bool {
+    value.range(
+        of: #"T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})$"#,
+        options: .regularExpression
+    ) != nil
 }
 
-public func allConditionsMatched(_ condition: Condition, context: Context) -> Bool {
+func _allConditionsAreMatched(
+    _ condition: Condition,
+    context: Context,
+    reportDiagnostic: FeaturevisorDiagnosticHandler? = nil,
+    getRegex: @escaping FeaturevisorRegexProvider = uncachedRegex
+) -> Bool {
     switch condition {
     case .all:
         return true
     case .invalidToken:
         return false
     case .predicate(let predicate):
-        return conditionIsMatched(predicate, context: context)
+        do {
+            return try conditionIsMatchedThrowing(predicate, context: context, getRegex: getRegex)
+        } catch {
+            reportDiagnostic?(FeaturevisorDiagnostic(
+                level: .warn,
+                code: "condition_match_error",
+                message: error.localizedDescription,
+                originalError: String(describing: error),
+                details: [
+                    "condition": .string(String(describing: predicate)),
+                    "context": .object(context),
+                ]
+            ))
+            return false
+        }
     case .and(let list):
-        return list.allSatisfy { allConditionsMatched($0, context: context) }
+        return list.allSatisfy {
+            _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
+        }
     case .or(let list):
-        return list.contains { allConditionsMatched($0, context: context) }
+        return list.contains {
+            _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
+        }
     case .not(let list):
-        return !list.allSatisfy { allConditionsMatched($0, context: context) }
+        return !list.allSatisfy {
+            _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
+        }
     case .list(let list):
-        return list.allSatisfy { allConditionsMatched($0, context: context) }
+        return list.allSatisfy {
+            _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
+        }
     }
+}
+
+public func allConditionsAreMatched(_ condition: Condition, context: Context) -> Bool {
+    _allConditionsAreMatched(condition, context: context)
 }

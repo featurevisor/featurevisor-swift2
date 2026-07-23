@@ -6,6 +6,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     private var context: Context
     private var sticky: StickyFeatures?
     private let emitter = Emitter()
+    private var parentUnsubscribers: [(UUID, FeaturevisorUnsubscribe)] = []
 
     init(parent: Featurevisor, context: Context, sticky: StickyFeatures?) {
         self.parent = parent
@@ -14,24 +15,39 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     }
 
     public func getContext(_ context: Context? = nil) -> Context {
-        lock.withLock {
-            guard let context else { return self.context }
-            return self.context.merging(context, uniquingKeysWith: { _, new in new })
+        let childContext = lock.withLock {
+            self.context.merging(context ?? [:], uniquingKeysWith: { _, new in new })
         }
+        return parent.getContext(childContext)
     }
 
     public func setContext(_ context: Context, replace: Bool = false) {
-        lock.withLock {
+        let updatedContext = lock.withLock {
             self.context = replace ? context : self.context.merging(context, uniquingKeysWith: { _, new in new })
+            return self.context
         }
-        emitter.trigger(.contextSet)
+        emitter.trigger(.contextSet, payload: EventPayload([
+            "context": .object(updatedContext),
+            "replaced": .bool(replace),
+        ]))
     }
 
     public func setSticky(_ sticky: StickyFeatures, replace: Bool = false) {
-        lock.withLock {
+        let values = lock.withLock { () -> (StickyFeatures, StickyFeatures) in
+            let previous = self.sticky ?? [:]
             self.sticky = replace ? sticky : (self.sticky ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
+            return (previous, self.sticky ?? [:])
         }
-        emitter.trigger(.stickySet)
+        emitter.trigger(
+            .stickySet,
+            payload: EventPayload(
+                getParamsForStickySetEvent(
+                    previousStickyFeatures: values.0,
+                    newStickyFeatures: values.1,
+                    replace: replace
+                )
+            )
+        )
     }
 
     @discardableResult
@@ -39,10 +55,28 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
         if eventName == .contextSet || eventName == .stickySet {
             return emitter.on(eventName, callback: callback)
         }
-        return parent.on(eventName, callback: callback)
+        let parentUnsubscribe = parent.on(eventName, callback: callback)
+        let token = UUID()
+        var active = true
+        let unsubscribe: FeaturevisorUnsubscribe = { [weak self] in
+            guard active else { return }
+            active = false
+            parentUnsubscribe()
+            self?.lock.withLock {
+                self?.parentUnsubscribers.removeAll { $0.0 == token }
+            }
+        }
+        lock.withLock { parentUnsubscribers.append((token, unsubscribe)) }
+        return unsubscribe
     }
 
     public func close() {
+        let unsubscribers = lock.withLock { () -> [FeaturevisorUnsubscribe] in
+            let current = parentUnsubscribers.map(\.1)
+            parentUnsubscribers = []
+            return current
+        }
+        unsubscribers.forEach { $0() }
         emitter.clearAll()
     }
 

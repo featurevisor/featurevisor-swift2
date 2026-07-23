@@ -201,4 +201,28 @@ final class ModulesTests: XCTestCase {
         XCTAssertEqual(evaluation.bucketValue, 50_000)
         XCTAssertEqual(evaluation.reason, .forced)
     }
+
+    func testModuleDiagnosticLevelIsIndependentFromInstanceLevel() {
+        let observed = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
+        let module = FeaturevisorModule(
+            name: "observer",
+            setup: { api in
+                api.onDiagnostic({ diagnostic in
+                    observed.value.append(diagnostic)
+                }, options: FeaturevisorModuleDiagnosticOptions(logLevel: .debug))
+            }
+        )
+        let sdk = createFeaturevisor(FeaturevisorOptions(
+            logLevel: .fatal,
+            modules: [module]
+        ))
+
+        _ = sdk.isEnabled("missing")
+
+        XCTAssertTrue(observed.value.contains {
+            $0.code == "feature_not_found" &&
+                $0.details["featureKey"] == .string("missing") &&
+                $0.details["reason"] == .string("feature_not_found")
+        })
+    }
 }

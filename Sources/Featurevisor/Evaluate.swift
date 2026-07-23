@@ -4,7 +4,7 @@ public struct EvaluateDependencies: Sendable {
     public var context: Context
     var reportDiagnostic: @Sendable (FeaturevisorDiagnostic) -> Void
     var modulesManager: ModulesManager
-    var datafileReader: DatafileReader
+    var evaluationData: InstanceEvaluationDataProvider
     public var sticky: StickyFeatures?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
@@ -13,7 +13,7 @@ public struct EvaluateDependencies: Sendable {
         context: Context,
         reportDiagnostic: @escaping @Sendable (FeaturevisorDiagnostic) -> Void,
         modulesManager: ModulesManager,
-        datafileReader: DatafileReader,
+        evaluationData: InstanceEvaluationDataProvider,
         sticky: StickyFeatures? = nil,
         defaultVariationValue: VariationValue? = nil,
         defaultVariableValue: VariableValue? = nil
@@ -21,7 +21,7 @@ public struct EvaluateDependencies: Sendable {
         self.context = context
         self.reportDiagnostic = reportDiagnostic
         self.modulesManager = modulesManager
-        self.datafileReader = datafileReader
+        self.evaluationData = evaluationData
         self.sticky = sticky
         self.defaultVariationValue = defaultVariationValue
         self.defaultVariableValue = defaultVariableValue
@@ -52,7 +52,7 @@ func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
 
     var evaluation = evaluate(updated)
 
-    if evaluation.type == .variation, evaluation.variationValue == nil,
+    if evaluation.type == .variation, evaluation.variationValue == nil, evaluation.variation == nil,
        let defaultVariation = updated.dependencies.defaultVariationValue {
         evaluation.variationValue = defaultVariation
     }
@@ -71,12 +71,40 @@ func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     return evaluation
 }
 
+private func reportEvaluationDiagnostic(
+    _ reportDiagnostic: FeaturevisorDiagnosticHandler,
+    evaluation: Evaluation,
+    message: String,
+    level: LogLevel = .debug,
+    code: String? = nil
+) {
+    var details: [String: AnyValue] = [
+        "featureKey": .string(evaluation.featureKey),
+        "reason": .string(evaluation.reason.rawValue),
+    ]
+    if let variableKey = evaluation.variableKey {
+        details["variableKey"] = .string(variableKey)
+    }
+    if let data = try? JSONEncoder().encode(evaluation),
+       let encodedEvaluation = try? JSONDecoder().decode(AnyValue.self, from: data) {
+        details["evaluation"] = encodedEvaluation
+    }
+
+    reportDiagnostic(FeaturevisorDiagnostic(
+        level: level,
+        code: code ?? evaluation.reason.rawValue,
+        message: message,
+        originalError: evaluation.error,
+        details: details
+    ))
+}
+
 func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let type = options.type
     let featureKey = options.featureKey
     let variableKey = options.variableKey
     let context = options.dependencies.context
-    let datafileReader = options.dependencies.datafileReader
+    let evaluationData = options.dependencies.evaluationData
     let modulesManager = options.dependencies.modulesManager
     let reportDiagnostic = options.dependencies.reportDiagnostic
 
@@ -87,7 +115,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                 var disabled = Evaluation(type: type, featureKey: featureKey, reason: .disabled)
                 disabled.enabled = false
 
-                if let feature = datafileReader.getFeature(featureKey) {
+                if let feature = evaluationData.getFeature(featureKey) {
                     if type == .variation, let disabledVariationValue = feature.disabledVariationValue {
                         disabled.reason = .variationDisabled
                         disabled.variationValue = disabledVariationValue
@@ -110,12 +138,11 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                     }
                 }
 
-                reportDiagnostic(FeaturevisorDiagnostic(
-                    level: .debug,
-                    code: "disabled",
-                    message: "Feature is disabled",
-                    details: ["featureKey": .string(featureKey)]
-                ))
+                reportEvaluationDiagnostic(
+                    reportDiagnostic,
+                    evaluation: disabled,
+                    message: "Feature is disabled"
+                )
                 return disabled
             }
         }
@@ -144,14 +171,15 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
             }
         }
 
-        guard let feature = datafileReader.getFeature(featureKey) else {
-            reportDiagnostic(FeaturevisorDiagnostic(
-                level: .warn,
-                code: "feature_not_found",
+        guard let feature = evaluationData.getFeature(featureKey) else {
+            let notFound = Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
+            reportEvaluationDiagnostic(
+                reportDiagnostic,
+                evaluation: notFound,
                 message: "Feature not found",
-                details: ["featureKey": .string(featureKey)]
-            ))
-            return Evaluation(type: type, featureKey: featureKey, reason: .featureNotFound)
+                level: .warn
+            )
+            return notFound
         }
 
         if type == .flag, feature.deprecated == true {
@@ -167,17 +195,14 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         if let variableKey {
             variableSchema = feature.variablesSchema?[variableKey]
             if variableSchema == nil {
-                reportDiagnostic(FeaturevisorDiagnostic(
-                    level: .warn,
-                    code: "variable_not_found",
-                    message: "Variable schema not found",
-                    details: [
-                        "featureKey": .string(featureKey),
-                        "variableKey": .string(variableKey),
-                    ]
-                ))
                 var out = Evaluation(type: type, featureKey: featureKey, reason: .variableNotFound)
                 out.variableKey = variableKey
+                reportEvaluationDiagnostic(
+                    reportDiagnostic,
+                    evaluation: out,
+                    message: "Variable schema not found",
+                    level: .warn
+                )
                 return out
             }
             if variableSchema?.deprecated == true {
@@ -194,16 +219,17 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         }
 
         if type == .variation, (feature.variations ?? []).isEmpty {
-            reportDiagnostic(FeaturevisorDiagnostic(
-                level: .warn,
-                code: "no_variations",
+            let noVariations = Evaluation(type: type, featureKey: featureKey, reason: .noVariations)
+            reportEvaluationDiagnostic(
+                reportDiagnostic,
+                evaluation: noVariations,
                 message: "No variations",
-                details: ["featureKey": .string(featureKey)]
-            ))
-            return Evaluation(type: type, featureKey: featureKey, reason: .noVariations)
+                level: .warn
+            )
+            return noVariations
         }
 
-        let matchedForce = datafileReader.getMatchedForce(feature, context: context)
+        let matchedForce = evaluationData.getMatchedForce(feature, context: context)
         if let force = matchedForce.force {
             if type == .flag, let enabled = force.enabled {
                 var forced = Evaluation(type: type, featureKey: featureKey, reason: .forced)
@@ -291,8 +317,8 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                 ))
             }
         }
-        let matchedTraffic = datafileReader.getMatchedTraffic(feature.traffic, context: context)
-        let matchedAllocation = matchedTraffic.flatMap { datafileReader.getMatchedAllocation($0, bucketValue: bucketValue) }
+        let matchedTraffic = evaluationData.getMatchedTraffic(feature.traffic, context: context)
+        let matchedAllocation = matchedTraffic.flatMap { evaluationData.getMatchedAllocation($0, bucketValue: bucketValue) }
 
         if let matchedTraffic {
             if matchedTraffic.percentage == 0 {
@@ -380,7 +406,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         if type == .variable, let variableKey {
             if let matchedTraffic {
                 if let overrides = matchedTraffic.variableOverrides?[variableKey],
-                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, datafileReader: datafileReader) {
+                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, evaluationData: evaluationData) {
                     let override = overrides[overrideIndex]
                     var out = Evaluation(type: type, featureKey: featureKey, reason: .variableOverrideRule)
                     out.bucketKey = bucketKey
@@ -419,7 +445,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
             if let variationValue,
                let variation = feature.variations?.first(where: { $0.value == variationValue }) {
                 if let overrides = variation.variableOverrides?[variableKey],
-                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, datafileReader: datafileReader) {
+                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, evaluationData: evaluationData) {
                     let override = overrides[overrideIndex]
                     var out = Evaluation(type: type, featureKey: featureKey, reason: .variableOverrideVariation)
                     out.bucketKey = bucketKey
@@ -479,16 +505,16 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         return out
 }
 
-private func firstMatchedOverrideIndex(overrides: [VariableOverride], context: Context, datafileReader: DatafileReader) -> Int? {
+private func firstMatchedOverrideIndex(overrides: [VariableOverride], context: Context, evaluationData: InstanceEvaluationDataProvider) -> Int? {
     for (index, override) in overrides.enumerated() {
         if let conditions = override.conditions {
-            if datafileReader.allConditionsAreMatched(parseConditionIfStringified(conditions), context: context) {
+            if evaluationData.allConditionsAreMatched(parseConditionIfStringified(conditions), context: context) {
                 return index
             }
         }
 
         if let segments = override.segments {
-            if datafileReader.allSegmentsAreMatched(parseSegmentsIfStringified(segments), context: context) {
+            if evaluationData.allSegmentsAreMatched(parseSegmentsIfStringified(segments), context: context) {
                 return index
             }
         }

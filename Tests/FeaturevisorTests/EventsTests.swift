@@ -14,17 +14,15 @@ final class EventsTests: XCTestCase {
     }
 
     func testDatafileEventParams() {
-        let logger = createLogger(level: .fatal)
-
         let d1 = TestFixtures.basicDatafile()
         var d2 = TestFixtures.basicDatafile()
         d2.revision = "2"
         d2.features["test"]?.hash = "h2"
 
-        let p = DatafileReader(datafile: d1, logger: logger)
-        let n = DatafileReader(datafile: d2, logger: logger)
+        let p = InstanceEvaluationDataProvider(datafile: d1, reportDiagnostic: { _ in })
+        let n = InstanceEvaluationDataProvider(datafile: d2, reportDiagnostic: { _ in })
 
-        let params = getParamsForDatafileSetEvent(previousDatafileReader: p, newDatafileReader: n, replace: true)
+        let params = getParamsForDatafileSetEvent(previousInstanceEvaluationDataProvider: p, newInstanceEvaluationDataProvider: n, replace: true)
         XCTAssertEqual(params["revision"], .string("2"))
         XCTAssertEqual(params["previousRevision"], .string("1"))
         XCTAssertEqual(params["revisionChanged"], .bool(true))

@@ -5,7 +5,7 @@ private func rotl32(_ x: UInt32, _ r: UInt32) -> UInt32 {
     (x << r) | (x >> (32 - r))
 }
 
-public func murmurhash3(_ key: String, seed: UInt32 = 1) -> UInt32 {
+func murmurhash3(_ key: String, seed: UInt32 = 1) -> UInt32 {
     let data = Array(key.utf8)
     let c1: UInt32 = 0xcc9e2d51
     let c2: UInt32 = 0x1b873593

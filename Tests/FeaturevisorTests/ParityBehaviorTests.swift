@@ -6,7 +6,7 @@ final class ParityBehaviorTests: XCTestCase {
         let condition = Condition.predicate(
             ConditionPredicate(attribute: "browser", operator: "matches", value: .string("^firefox$"), regexFlags: "i")
         )
-        XCTAssertTrue(allConditionsMatched(condition, context: ["browser": .string("FireFox")]))
+        XCTAssertTrue(allConditionsAreMatched(condition, context: ["browser": .string("FireFox")]))
     }
 
     func testRequiredFeatureWithVariation() {

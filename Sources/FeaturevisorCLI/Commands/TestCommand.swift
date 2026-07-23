@@ -173,7 +173,7 @@ struct TestCommand {
         return createFeaturevisor(
             FeaturevisorOptions(
                 datafile: datafile,
-                logLevel: CLIHelpers.loggerLevel(options),
+                logLevel: CLIHelpers.logLevel(options),
                 sticky: sticky,
                 modules: [module]
             )
@@ -443,7 +443,7 @@ struct TestCommand {
 
         for assertion in assertions {
             let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
-            let actual = allConditionsMatched(conditions, context: context)
+            let actual = allConditionsAreMatched(conditions, context: context)
             let expected = (assertion["expectedToMatch"] as? Bool) ?? false
             let description = (assertion["description"] as? String) ?? "assertion"
             if actual == expected {
