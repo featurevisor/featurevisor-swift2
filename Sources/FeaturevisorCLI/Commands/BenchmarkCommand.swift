@@ -88,7 +88,7 @@ struct BenchmarkCommand {
             return 1
         }
 
-        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.loggerLevel(options)))
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.logLevel(options)))
 
         print("\nBenchmark Featurevisor feature")
         print("  Feature: \(options.feature)")

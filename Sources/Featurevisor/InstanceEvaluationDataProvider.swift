@@ -1,19 +1,21 @@
 import Foundation
 
-final class DatafileReader: @unchecked Sendable {
+final class InstanceEvaluationDataProvider: @unchecked Sendable {
     private let schemaVersion: String
     private let revision: String
     private let segments: [SegmentKey: Segment]
     private let features: [FeatureKey: Feature]
+    private let reportDiagnostic: FeaturevisorDiagnosticHandler
     private var parsedSegments: [SegmentKey: Segment] = [:]
+    private var regexCache: [String: NSRegularExpression] = [:]
     private let lock = FeaturevisorLock()
 
-    init(datafile: DatafileContent, logger: Logger) {
+    init(datafile: DatafileContent, reportDiagnostic: @escaping FeaturevisorDiagnosticHandler) {
         self.schemaVersion = datafile.schemaVersion
         self.revision = datafile.revision
         self.segments = datafile.segments
         self.features = datafile.features
-        _ = logger
+        self.reportDiagnostic = reportDiagnostic
     }
 
     func getRevision() -> String { revision }
@@ -24,10 +26,21 @@ final class DatafileReader: @unchecked Sendable {
         if let cached = lock.withLock({ parsedSegments[key] }) { return cached }
         guard var segment = segments[key] else { return nil }
         if case .string(let stringified) = segment.conditions,
-           let data = stringified.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode(Condition.self, from: data) {
-            segment.conditions = .tree(decoded)
-            lock.withLock { parsedSegments[key] = segment }
+           stringified != "*",
+           let data = stringified.data(using: .utf8) {
+            do {
+                let decoded = try JSONDecoder().decode(Condition.self, from: data)
+                segment.conditions = .tree(decoded)
+                lock.withLock { parsedSegments[key] = segment }
+            } catch {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .error,
+                    code: "conditions_parse_error",
+                    message: "Error parsing conditions",
+                    originalError: String(describing: error),
+                    details: ["conditions": .string(stringified)]
+                ))
+            }
         }
         return segment
     }
@@ -43,7 +56,32 @@ final class DatafileReader: @unchecked Sendable {
     }
 
     func allConditionsAreMatched(_ conditions: Condition, context: Context) -> Bool {
-        allConditionsMatched(conditions, context: context)
+        _allConditionsAreMatched(
+            conditions,
+            context: context,
+            reportDiagnostic: reportDiagnostic,
+            getRegex: getRegex
+        )
+    }
+
+    private func getRegex(_ pattern: String, _ flags: String?) throws -> NSRegularExpression {
+        let key = "\(pattern)\u{0}\(flags ?? "")"
+        if let cached = lock.withLock({ regexCache[key] }) {
+            return cached
+        }
+
+        let compiled = try NSRegularExpression(pattern: pattern, options: try regexOptions(flags))
+        return lock.withLock {
+            if let cached = regexCache[key] {
+                return cached
+            }
+            regexCache[key] = compiled
+            return compiled
+        }
+    }
+
+    func getCachedRegexCount() -> Int {
+        lock.withLock { regexCache.count }
     }
 
     func segmentIsMatched(_ segment: Segment, context: Context) -> Bool {

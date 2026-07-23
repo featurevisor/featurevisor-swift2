@@ -1,5 +1,13 @@
 import Foundation
 
+public enum LogLevel: Int, Codable, CaseIterable, Sendable {
+    case debug = 10
+    case info = 20
+    case warn = 30
+    case error = 40
+    case fatal = 50
+}
+
 public struct FeaturevisorDiagnostic: Sendable {
     public var level: LogLevel
     public var code: String
@@ -43,4 +51,9 @@ public struct FeaturevisorModuleDiagnosticOptions: Sendable {
 
 func shouldLogDiagnostic(currentLevel: LogLevel, diagnosticLevel: LogLevel) -> Bool {
     diagnosticLevel.rawValue >= currentLevel.rawValue
+}
+
+func writeDiagnosticToConsole(_ diagnostic: FeaturevisorDiagnostic) {
+    let serialized = diagnostic.details.isEmpty ? "" : " \(diagnostic.details)"
+    FileHandle.standardError.write(Data("[Featurevisor] \(diagnostic.message)\(serialized)\n".utf8))
 }

@@ -4,7 +4,7 @@ import Featurevisor
 enum CLIHelpers {
     static let noEnvironmentKey = "__no_environment__"
 
-    static func loggerLevel(_ options: CLIOptions) -> LogLevel {
+    static func logLevel(_ options: CLIOptions) -> LogLevel {
         if options.verbose { return .debug }
         if options.quiet { return .fatal }
         return .warn

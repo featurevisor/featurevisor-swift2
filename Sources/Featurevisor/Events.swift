@@ -1,6 +1,6 @@
 import Foundation
 
-public func getParamsForStickySetEvent(
+func getParamsForStickySetEvent(
     previousStickyFeatures: StickyFeatures = [:],
     newStickyFeatures: StickyFeatures = [:],
     replace: Bool
@@ -16,23 +16,23 @@ public func getParamsForStickySetEvent(
 }
 
 func getParamsForDatafileSetEvent(
-    previousDatafileReader: DatafileReader,
-    newDatafileReader: DatafileReader,
+    previousInstanceEvaluationDataProvider: InstanceEvaluationDataProvider,
+    newInstanceEvaluationDataProvider: InstanceEvaluationDataProvider,
     replace: Bool
 ) -> [String: AnyValue] {
-    let previousRevision = previousDatafileReader.getRevision()
-    let previousFeatureKeys = Set(previousDatafileReader.getFeatureKeys())
+    let previousRevision = previousInstanceEvaluationDataProvider.getRevision()
+    let previousFeatureKeys = Set(previousInstanceEvaluationDataProvider.getFeatureKeys())
 
-    let newRevision = newDatafileReader.getRevision()
-    let newFeatureKeys = Set(newDatafileReader.getFeatureKeys())
+    let newRevision = newInstanceEvaluationDataProvider.getRevision()
+    let newFeatureKeys = Set(newInstanceEvaluationDataProvider.getFeatureKeys())
 
     let removed = previousFeatureKeys.subtracting(newFeatureKeys)
     let added = newFeatureKeys.subtracting(previousFeatureKeys)
 
     var changed: Set<FeatureKey> = []
     for key in previousFeatureKeys.intersection(newFeatureKeys) {
-        let previousHash = previousDatafileReader.getFeature(key)?.hash
-        let newHash = newDatafileReader.getFeature(key)?.hash
+        let previousHash = previousInstanceEvaluationDataProvider.getFeature(key)?.hash
+        let newHash = newInstanceEvaluationDataProvider.getFeature(key)?.hash
         if previousHash != newHash {
             changed.insert(key)
         }

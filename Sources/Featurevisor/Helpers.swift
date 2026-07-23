@@ -1,6 +1,6 @@
 import Foundation
 
-public func getValueByType(_ value: AnyValue?, fieldType: String) -> AnyValue? {
+func getValueByType(_ value: AnyValue?, fieldType: String) -> AnyValue? {
     guard let value else { return nil }
 
     switch fieldType {

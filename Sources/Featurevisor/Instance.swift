@@ -37,13 +37,12 @@ private struct ModuleDiagnosticSubscription: Sendable {
 public final class Featurevisor: @unchecked Sendable {
     private let lock = FeaturevisorLock()
     private var context: Context
-    private let logger: Logger
     private var logLevel: LogLevel
     private let onDiagnostic: FeaturevisorDiagnosticHandler?
     private var sticky: StickyFeatures?
 
     private var datafile: DatafileContent
-    private var datafileReader: DatafileReader
+    private var evaluationData: InstanceEvaluationDataProvider
     private var modulesManager: ModulesManager!
     private var moduleDiagnosticSubscriptions: [ModuleDiagnosticSubscription] = []
     private let emitter: Emitter
@@ -51,13 +50,12 @@ public final class Featurevisor: @unchecked Sendable {
 
     fileprivate init(options: FeaturevisorOptions) {
         self.context = options.context
-        self.logger = createLogger(level: options.logLevel)
         self.logLevel = options.logLevel
         self.onDiagnostic = options.onDiagnostic
         self.sticky = options.sticky
         self.emitter = Emitter()
         self.datafile = emptyDatafile
-        self.datafileReader = DatafileReader(datafile: emptyDatafile, logger: self.logger)
+        self.evaluationData = InstanceEvaluationDataProvider(datafile: emptyDatafile, reportDiagnostic: { _ in })
 
         self.modulesManager = ModulesManager(
             modules: options.modules,
@@ -76,17 +74,10 @@ public final class Featurevisor: @unchecked Sendable {
             }
         )
 
-        self.logger.setHandler { [weak self] level, message, details in
-            var code = details["reason"] ?? message
-            if message == "feature is deprecated" { code = "deprecated_feature" }
-            if message == "variable is deprecated" { code = "deprecated_variable" }
-            self?.reportDiagnostic(FeaturevisorDiagnostic(
-                level: level,
-                code: code,
-                message: message,
-                details: details.mapValues { .string($0) }
-            ))
-        }
+        self.evaluationData = InstanceEvaluationDataProvider(
+            datafile: emptyDatafile,
+            reportDiagnostic: { [weak self] diagnostic in self?.reportDiagnostic(diagnostic) }
+        )
 
         if let datafile = options.datafile {
             setDatafile(datafile, replace: true)
@@ -97,21 +88,23 @@ public final class Featurevisor: @unchecked Sendable {
 
     public func setLogLevel(_ level: LogLevel) {
         lock.withLock { logLevel = level }
-        logger.setLevel(level)
     }
 
     public func setDatafile(_ datafile: DatafileContent, replace: Bool = false) {
         let result = lock.withLock { () -> [String: AnyValue]? in
             guard !closed else { return nil }
             let storedDatafile = replace ? datafile : mergeStoredDatafile(existing: self.datafile, incoming: datafile)
-            let newDatafileReader = DatafileReader(datafile: storedDatafile, logger: logger)
+            let newInstanceEvaluationDataProvider = InstanceEvaluationDataProvider(
+                datafile: storedDatafile,
+                reportDiagnostic: { [weak self] diagnostic in self?.reportDiagnostic(diagnostic) }
+            )
             let details = getParamsForDatafileSetEvent(
-                previousDatafileReader: datafileReader,
-                newDatafileReader: newDatafileReader,
+                previousInstanceEvaluationDataProvider: evaluationData,
+                newInstanceEvaluationDataProvider: newInstanceEvaluationDataProvider,
                 replace: replace
             )
             self.datafile = storedDatafile
-            self.datafileReader = newDatafileReader
+            self.evaluationData = newInstanceEvaluationDataProvider
             return details
         }
         guard let details = result else { return }
@@ -146,7 +139,7 @@ public final class Featurevisor: @unchecked Sendable {
         emitter.trigger(.stickySet, payload: EventPayload(payload))
     }
 
-    private func reader() -> DatafileReader { lock.withLock { datafileReader } }
+    private func reader() -> InstanceEvaluationDataProvider { lock.withLock { evaluationData } }
     public func getRevision() -> String { reader().getRevision() }
     public func getSchemaVersion() -> String { reader().getSchemaVersion() }
     public func getSegment(_ segmentKey: SegmentKey) -> Segment? { reader().getSegment(segmentKey) }
@@ -199,13 +192,7 @@ public final class Featurevisor: @unchecked Sendable {
             if let onDiagnostic = snapshot.2 {
                 onDiagnostic(diagnostic)
             } else {
-                var details = diagnostic.details.mapValues { String(describing: $0.rawValue) }
-                details["code"] = diagnostic.code
-                if let module = diagnostic.module { details["module"] = module }
-                if let moduleName = diagnostic.moduleName { details["moduleName"] = moduleName }
-                if let originalError = diagnostic.originalError { details["originalError"] = originalError }
-
-                Logger.writeToConsole(diagnostic.level, diagnostic.message, details)
+                writeDiagnosticToConsole(diagnostic)
             }
         }
 
@@ -301,7 +288,7 @@ public final class Featurevisor: @unchecked Sendable {
         let snapshot = lock.withLock {
             (
                 self.context.merging(context, uniquingKeysWith: { _, new in new }),
-                datafileReader,
+                evaluationData,
                 options.sticky ?? sticky
             )
         }
@@ -311,7 +298,7 @@ public final class Featurevisor: @unchecked Sendable {
                 self?.reportDiagnostic(diagnostic)
             },
             modulesManager: modulesManager,
-            datafileReader: snapshot.1,
+            evaluationData: snapshot.1,
             sticky: snapshot.2,
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue

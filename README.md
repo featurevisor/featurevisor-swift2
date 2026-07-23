@@ -59,7 +59,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 In your Swift application, add this package using Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "1.1.0")
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "2.0.0")
 ```
 
 Then add the product dependency:
@@ -544,7 +544,12 @@ let child = f.spawn([
 ])
 
 let enabled = child.isEnabled("my_feature")
+let flagEvaluation = child.evaluateFlag("my_feature")
+let variationEvaluation = child.evaluateVariation("my_feature")
+let variableEvaluation = child.evaluateVariable("my_feature", "my_variable")
 ```
+
+A child snapshots the parent keys that exist when it is spawned. Child values win for those keys. Parent keys introduced later are still inherited. Calling `close()` removes both child-owned listeners and subscriptions delegated to the parent.
 
 ## Close
 
@@ -594,7 +599,7 @@ swift run featurevisor assess-distribution \
 The package exposes `FeaturevisorOpenFeature` as a separate library product. Targets using it should declare both package dependencies:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "1.1.0"),
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "2.0.0"),
 .package(url: "https://github.com/open-feature/swift-sdk.git", from: "0.5.0")
 ```
 
@@ -702,7 +707,7 @@ To verify the public products from clean consumer packages:
 ./scripts/verify-consumers.sh
 ```
 
-Release tags use semantic versions such as `v1.1.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
+Release tags use semantic versions such as `v2.0.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
 
 ## License
 
