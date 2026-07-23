@@ -62,6 +62,12 @@ final class ConditionsTests: XCTestCase {
 
         let build = Condition.predicate(.init(attribute: "version", operator: "semverEquals", value: .string("1.2.3+build.9")))
         XCTAssertTrue(allConditionsAreMatched(build, context: ["version": .string("1.2.3+build.5")]))
+
+        XCTAssertEqual(try compareVersions("v1.2.3", "1.2.3"), .equal)
+        XCTAssertEqual(try compareVersions("1.2.*", "1.2.9"), .equal)
+        XCTAssertThrowsError(try compareVersions("1.2.3-", "1.2.3"))
+        XCTAssertThrowsError(try compareVersions("1.2.3-alpha!", "1.2.3"))
+        XCTAssertThrowsError(try compareVersions("1.2.3.4.5", "1.2.3"))
     }
 
     func testBeforeAfter() {

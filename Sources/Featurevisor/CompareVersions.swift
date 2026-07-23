@@ -1,6 +1,6 @@
 import Foundation
 
-enum VersionComparison: Sendable {
+enum VersionComparison: Sendable, Equatable {
     case lessThan
     case equal
     case greaterThan
@@ -13,6 +13,11 @@ private struct InvalidSemanticVersion: LocalizedError {
         "Invalid argument not valid semver ('\(value)' received)"
     }
 }
+
+private let semanticVersionPattern = try! NSRegularExpression(
+    pattern: #"^[v^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+))?(?:-([\da-z\-]+(?:\.[\da-z\-]+)*))?(?:\+[\da-z\-]+(?:\.[\da-z\-]+)*)?)?)?$"#,
+    options: [.caseInsensitive]
+)
 
 func compareVersions(_ lhs: String, _ rhs: String) throws -> VersionComparison {
     guard let left = ParsedVersion(lhs) else { throw InvalidSemanticVersion(value: lhs) }
@@ -53,20 +58,24 @@ private struct ParsedVersion {
     let prerelease: [String]?
 
     init?(_ value: String) {
-        let stripped = value.replacingOccurrences(
-            of: #"^[v^~<>=]*"#,
-            with: "",
-            options: .regularExpression
-        )
-        let withoutBuild = stripped.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)[0]
-        let parts = withoutBuild.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-        let core = parts[0].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        guard !core.isEmpty, core.allSatisfy({ Int($0) != nil || $0 == "x" || $0 == "X" || $0 == "*" }) else {
+        let fullRange = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = semanticVersionPattern.firstMatch(
+            in: value,
+            range: fullRange
+        ), match.range == fullRange else {
             return nil
         }
 
-        self.core = core
-        self.prerelease = parts.count == 2 ? parts[1].split(separator: ".", omittingEmptySubsequences: false).map(String.init) : nil
+        func capture(_ index: Int) -> String? {
+            let range = match.range(at: index)
+            guard range.location != NSNotFound, let swiftRange = Swift.Range(range, in: value) else {
+                return nil
+            }
+            return String(value[swiftRange])
+        }
+
+        self.core = (1...4).compactMap(capture)
+        self.prerelease = capture(5)?.split(separator: ".").map(String.init)
     }
 }
 
