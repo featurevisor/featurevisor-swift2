@@ -82,6 +82,8 @@ Most applications only need `createFeaturevisor`, `Featurevisor`, and `Featurevi
 
 The SDK supports iOS 14, macOS 11, tvOS 14, and watchOS 7 or newer. Shared `Featurevisor`, child instance, and OpenFeature provider state is safe to use from concurrent callers. Module, diagnostic, event, and tracking callbacks are `@Sendable`; callback implementations must synchronize any mutable state they capture.
 
+See the [SwiftUI iOS example application](https://github.com/featurevisor/featurevisor-example-ios) for a small application that fetches a datafile and evaluates a flag, variation, and variable.
+
 ## Initialization
 
 The SDK can be initialized by passing [datafile](https://featurevisor.com/docs/building-datafiles/) content directly:
