@@ -225,4 +225,40 @@ final class ModulesTests: XCTestCase {
                 $0.details["reason"] == .string("feature_not_found")
         })
     }
+
+    func testCanonicalModulePhaseOrder() {
+        let order = ConcurrencyBox<[String]>([])
+        func module(_ name: String) -> FeaturevisorModule {
+            FeaturevisorModule(
+                name: name,
+                before: { options in order.value.append("before:\(name)"); return options },
+                beforeEvaluation: { options in order.value.append("beforeEvaluation:\(name)"); return options },
+                after: { evaluation, _ in order.value.append("after:\(name)"); return evaluation },
+                afterEvaluation: { evaluation, _ in order.value.append("afterEvaluation:\(name)"); return evaluation }
+            )
+        }
+        let sdk = createFeaturevisor(FeaturevisorOptions(logLevel: .fatal, modules: [module("first"), module("second")]))
+        _ = sdk.evaluateFlag("missing")
+        XCTAssertEqual(order.value, [
+            "before:first", "before:second",
+            "beforeEvaluation:first", "beforeEvaluation:second",
+            "afterEvaluation:first", "afterEvaluation:second",
+            "after:first", "after:second",
+        ])
+    }
+
+    func testRequiredFeaturesAndDefaultsUseUnifiedModules() throws {
+        let raw = #"{"schemaVersion":"2","revision":"modules","segments":{"allowed":{"conditions":{"attribute":"allow","operator":"equals","value":true}}},"features":{"required":{"bucketBy":"userId","traffic":[{"key":"all","segments":"allowed","percentage":100000}]},"dependent":{"bucketBy":"userId","requiredFeatures":["required"],"traffic":[{"key":"all","segments":"*","percentage":100000}]}},"variables":{}}"#
+        let datafile = try JSONDecoder().decode(DatafileContent.self, from: Data(raw.utf8))
+        let module = FeaturevisorModule(name: "required-context", beforeEvaluation: { options in
+            var updated = options
+            if updated.featureKey == "required" { updated.dependencies.context["allow"] = .bool(true) }
+            if updated.type == .variable { updated.dependencies.defaultVariableValue = .string("module-default") }
+            return updated
+        })
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: .fatal, modules: [module]))
+        XCTAssertTrue(sdk.isEnabled("dependent", ["userId": .string("u")]))
+        XCTAssertEqual(sdk.getVariable("missing"), .string("module-default"))
+        XCTAssertNil(sdk.evaluateVariable("missing").featureKey)
+    }
 }

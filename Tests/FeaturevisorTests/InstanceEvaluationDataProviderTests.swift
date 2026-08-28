@@ -62,7 +62,7 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
     func testSharedV3ConformanceFixture() throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: "conformance/sdk-v3.json"))
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(fixture["version"] as? Int, 5)
+        XCTAssertEqual(fixture["version"] as? Int, 6)
 
         let bucketing = fixture["bucketing"] as! [String: Any]
         let expected = bucketing["allocationExpectations"] as! [String: String]

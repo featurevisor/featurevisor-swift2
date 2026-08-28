@@ -57,7 +57,7 @@ private func dependencies(_ variable: GlobalVariable) -> (segments: Set<String>,
     return (segments, features)
 }
 
-func getParamsForStickySetEvent(
+func getParamsForStickyFeaturesSetEvent(
     previousStickyFeatures: StickyFeatures = [:],
     newStickyFeatures: StickyFeatures = [:],
     replace: Bool

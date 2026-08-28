@@ -203,7 +203,7 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
             "featurevisorReason": .string(evaluation.reason.rawValue),
             "schemaVersion": .string(featurevisor.getSchemaVersion()),
         ]
-        if !evaluation.featureKey.isEmpty { metadata["featureKey"] = .string(evaluation.featureKey) }
+        if let featureKey = evaluation.featureKey { metadata["featureKey"] = .string(featureKey) }
         let revision = featurevisor.getRevision()
         if !revision.isEmpty { metadata["revision"] = .string(revision) }
         if let value = evaluation.variableKey { metadata["variableKey"] = .string(value) }
@@ -238,9 +238,9 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private func errorMessage(_ evaluation: Evaluation) -> String {
         if let error = evaluation.error { return error }
         switch evaluation.reason {
-        case .featureNotFound: return "Feature \"\(evaluation.featureKey)\" was not found"
-        case .variableNotFound: return "Variable \"\(evaluation.variableKey ?? "")\" was not found for feature \"\(evaluation.featureKey)\""
-        case .noVariations: return "Feature \"\(evaluation.featureKey)\" has no variations"
+        case .featureNotFound: return "Feature \"\(evaluation.featureKey ?? "")\" was not found"
+        case .variableNotFound: return "Variable \"\(evaluation.variableKey ?? "")\" was not found for feature \"\(evaluation.featureKey ?? "")\""
+        case .noVariations: return "Feature \"\(evaluation.featureKey ?? "")\" has no variations"
         default: return "Featurevisor evaluation failed"
         }
     }

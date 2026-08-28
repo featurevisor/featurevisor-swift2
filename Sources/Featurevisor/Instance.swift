@@ -139,7 +139,7 @@ public final class Featurevisor: @unchecked Sendable {
             return (previous, self.stickyFeatures ?? [:])
         }
         guard let (previousSticky, newSticky) = values else { return }
-        let payload = getParamsForStickySetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: newSticky, replace: replace)
+        let payload = getParamsForStickyFeaturesSetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: newSticky, replace: replace)
         reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "sticky_features_set", message: "Sticky features set", details: payload))
         emitter.trigger(.stickyFeaturesSet, payload: EventPayload(payload))
     }

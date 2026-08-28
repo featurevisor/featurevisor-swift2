@@ -3,7 +3,7 @@ import XCTest
 
 final class EventsTests: XCTestCase {
     func testStickyEventParams() {
-        let params = getParamsForStickySetEvent(
+        let params = getParamsForStickyFeaturesSetEvent(
             previousStickyFeatures: ["a": EvaluatedFeature(enabled: true)],
             newStickyFeatures: ["b": EvaluatedFeature(enabled: true)],
             replace: false

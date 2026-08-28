@@ -509,6 +509,8 @@ let globalVariableDetails = f.evaluateVariable("welcomeMessage")
 
 Modules allow you to intercept evaluation inputs and outputs.
 
+For feature evaluations, all `before` callbacks run in registration order, followed by all `beforeEvaluation` callbacks. After evaluation and caller defaults, all `afterEvaluation` callbacks run, followed by all `after` callbacks. Global variable evaluations use only `beforeEvaluation` and `afterEvaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved.
+
 ### Defining a module
 
 ```swift

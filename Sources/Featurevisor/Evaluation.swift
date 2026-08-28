@@ -29,7 +29,7 @@ public enum EvaluationReason: String, Codable, Sendable {
 
 public struct Evaluation: Codable, Sendable {
     public var type: EvaluationType
-    public var featureKey: FeatureKey
+    public var featureKey: FeatureKey?
     public var reason: EvaluationReason
 
     public var bucketKey: String?
@@ -53,7 +53,7 @@ public struct Evaluation: Codable, Sendable {
     public var sticky: EvaluatedFeature?
     public var error: String?
 
-    public init(type: EvaluationType, featureKey: FeatureKey, reason: EvaluationReason) {
+    public init(type: EvaluationType, featureKey: FeatureKey? = nil, reason: EvaluationReason) {
         self.type = type
         self.featureKey = featureKey
         self.reason = reason

@@ -50,10 +50,10 @@ public struct EvaluateOptions: Sendable {
 func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     var updated = options
     for module in updated.dependencies.modulesManager.getAll() {
-        if let before = module.beforeEvaluation {
-            updated = before(updated)
-        }
         if !updated.globalVariable, let before = module.before { updated = before(updated) }
+    }
+    for module in updated.dependencies.modulesManager.getAll() {
+        if let before = module.beforeEvaluation { updated = before(updated) }
     }
 
     var evaluation = evaluate(updated)
@@ -72,6 +72,8 @@ func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
         if let after = module.afterEvaluation {
             evaluation = after(evaluation, updated)
         }
+    }
+    for module in updated.dependencies.modulesManager.getAll() {
         if !updated.globalVariable, let after = module.after { evaluation = after(evaluation, updated) }
     }
 
@@ -85,10 +87,8 @@ private func reportEvaluationDiagnostic(
     level: LogLevel = .debug,
     code: String? = nil
 ) {
-    var details: [String: AnyValue] = [
-        "featureKey": .string(evaluation.featureKey),
-        "reason": .string(evaluation.reason.rawValue),
-    ]
+    var details: [String: AnyValue] = ["reason": .string(evaluation.reason.rawValue)]
+    if let featureKey = evaluation.featureKey { details["featureKey"] = .string(featureKey) }
     if let variableKey = evaluation.variableKey {
         details["variableKey"] = .string(variableKey)
     }
@@ -579,21 +579,21 @@ private func requiredFeaturesAreMatched(_ requirements: [RequiredFeature], optio
 private func evaluateGlobalVariable(_ variableKey: VariableKey, options: EvaluateOptions) -> Evaluation {
     let dependencies = options.dependencies
     if let sticky = dependencies.stickyVariables?[variableKey] {
-        var out = Evaluation(type: .variable, featureKey: "", reason: .sticky)
+        var out = Evaluation(type: .variable, reason: .sticky)
         out.variableKey = variableKey
         out.variableValue = sticky
         return out
     }
 
     guard let variable = dependencies.evaluationData.getGlobalVariable(variableKey) else {
-        var out = Evaluation(type: .variable, featureKey: "", reason: .variableNotFound)
+        var out = Evaluation(type: .variable, reason: .variableNotFound)
         out.variableKey = variableKey
         return out
     }
 
     if let required = variable.requiredFeatures,
        !requiredFeaturesAreMatched(required, options: options) {
-        var out = Evaluation(type: .variable, featureKey: "", reason: .requiredFeaturesUnmet)
+        var out = Evaluation(type: .variable, reason: .requiredFeaturesUnmet)
         out.variableKey = variableKey
         out.globalVariable = variable
         out.requiredFeatures = required
@@ -605,7 +605,7 @@ private func evaluateGlobalVariable(_ variableKey: VariableKey, options: Evaluat
     if let overrides = variable.overrides,
        let index = firstMatchedOverrideIndex(overrides: overrides, options: options) {
         let matched = overrides[index]
-        var out = Evaluation(type: .variable, featureKey: "", reason: .variableOverrideRule)
+        var out = Evaluation(type: .variable, reason: .variableOverrideRule)
         out.variableKey = variableKey
         out.variableValue = matched.value
         out.globalVariable = variable
@@ -615,7 +615,7 @@ private func evaluateGlobalVariable(_ variableKey: VariableKey, options: Evaluat
         return out
     }
 
-    var out = Evaluation(type: .variable, featureKey: "", reason: .variableDefault)
+    var out = Evaluation(type: .variable, reason: .variableDefault)
     out.variableKey = variableKey
     out.variableValue = variable.defaultValue
     out.globalVariable = variable

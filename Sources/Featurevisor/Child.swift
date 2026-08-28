@@ -43,7 +43,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
         emitter.trigger(
             .stickyFeaturesSet,
             payload: EventPayload(
-                getParamsForStickySetEvent(
+                getParamsForStickyFeaturesSetEvent(
                     previousStickyFeatures: values.0,
                     newStickyFeatures: values.1,
                     replace: replace
