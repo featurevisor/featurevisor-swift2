@@ -8,7 +8,9 @@ public typealias VariationValue = String
 public typealias Context = [String: AnyValue]
 public typealias VariableValue = AnyValue
 public typealias StickyFeatures = [FeatureKey: EvaluatedFeature]
+public typealias StickyVariables = [VariableKey: VariableValue]
 public typealias EvaluatedFeatures = [FeatureKey: EvaluatedFeature]
+public typealias EvaluatedVariables = [VariableKey: VariableValue]
 
 public struct DatafileContent: Codable, Equatable, Sendable {
     public var schemaVersion: String
@@ -16,19 +18,22 @@ public struct DatafileContent: Codable, Equatable, Sendable {
     public var featurevisorVersion: String?
     public var segments: [SegmentKey: Segment]
     public var features: [FeatureKey: Feature]
+    public var variables: [VariableKey: GlobalVariable]?
 
     public init(
         schemaVersion: String,
         revision: String,
         featurevisorVersion: String? = nil,
         segments: [SegmentKey: Segment],
-        features: [FeatureKey: Feature]
+        features: [FeatureKey: Feature],
+        variables: [VariableKey: GlobalVariable]? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.revision = revision
         self.featurevisorVersion = featurevisorVersion
         self.segments = segments
         self.features = features
+        self.variables = variables
     }
 
     public static func fromJSON(_ json: String) throws -> DatafileContent {
@@ -79,6 +84,7 @@ public struct Feature: Codable, Equatable, Sendable {
     public var hash: String?
     public var deprecated: Bool?
     public var required: [RequiredValue]?
+    public var requiredFeatures: [RequiredFeature]?
     public var variablesSchema: [VariableKey: ResolvedVariableSchema]?
     public var disabledVariationValue: VariationValue?
     public var variations: [Variation]?
@@ -86,6 +92,34 @@ public struct Feature: Codable, Equatable, Sendable {
     public var traffic: [Traffic]
     public var force: [Force]?
     public var ranges: [Range]?
+}
+
+public enum RequiredFeature: Codable, Equatable, Sendable {
+    case feature(FeatureKey)
+    case options(RequiredFeatureOptions)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let key = try? container.decode(String.self) {
+            self = .feature(key)
+            return
+        }
+        self = .options(try container.decode(RequiredFeatureOptions.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .feature(let key): try container.encode(key)
+        case .options(let options): try container.encode(options)
+        }
+    }
+}
+
+public struct RequiredFeatureOptions: Codable, Equatable, Sendable {
+    public var feature: FeatureKey
+    public var enabled: Bool?
+    public var variation: VariationValue?
 }
 
 public enum RequiredValue: Codable, Equatable, Sendable {
@@ -156,9 +190,22 @@ public struct Variation: Codable, Equatable, Sendable {
 }
 
 public struct VariableOverride: Codable, Equatable, Sendable {
+    public var key: String?
+    public var keyPath: [String]?
     public var value: VariableValue
     public var conditions: Condition?
     public var segments: GroupSegment?
+    public var requiredFeatures: [RequiredFeature]?
+}
+
+public struct GlobalVariable: Codable, Equatable, Sendable {
+    public var hash: String?
+    public var type: String
+    public var defaultValue: VariableValue
+    public var disabledValue: VariableValue?
+    public var useDefaultWhenDisabled: Bool?
+    public var requiredFeatures: [RequiredFeature]?
+    public var overrides: [VariableOverride]?
 }
 
 public struct ResolvedVariableSchema: Codable, Equatable, Sendable {

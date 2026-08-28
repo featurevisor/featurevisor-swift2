@@ -58,27 +58,33 @@ public struct FeaturevisorModule: Sendable {
     public var name: String?
     public var setup: (@Sendable (FeaturevisorModuleApi) -> Void)?
     public var before: (@Sendable (EvaluateOptions) -> EvaluateOptions)?
+    public var beforeEvaluation: (@Sendable (EvaluateOptions) -> EvaluateOptions)?
     public var bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)?
     public var bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)?
     public var after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)?
+    public var afterEvaluation: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)?
     public var close: (@Sendable () throws -> Void)?
 
     public init(
         name: String? = nil,
         setup: (@Sendable (FeaturevisorModuleApi) -> Void)? = nil,
         before: (@Sendable (EvaluateOptions) -> EvaluateOptions)? = nil,
+        beforeEvaluation: (@Sendable (EvaluateOptions) -> EvaluateOptions)? = nil,
         bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)? = nil,
         bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)? = nil,
         after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)? = nil,
+        afterEvaluation: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)? = nil,
         close: (@Sendable () throws -> Void)? = nil
     ) {
         self.id = UUID()
         self.name = name
         self.setup = setup
         self.before = before
+        self.beforeEvaluation = beforeEvaluation
         self.bucketKey = bucketKey
         self.bucketValue = bucketValue
         self.after = after
+        self.afterEvaluation = afterEvaluation
         self.close = close
     }
 }

@@ -149,6 +149,11 @@ enum CLIHelpers {
         return result
     }
 
+    static func anyToStickyVariables(_ value: Any?) -> StickyVariables? {
+        guard let object = value as? [String: Any] else { return nil }
+        return object.mapValues(anyToAnyValue)
+    }
+
     static func compareExpected(_ actual: AnyValue?, expected: Any?) -> Bool {
         guard let expected else { return actual == nil || actual == .null }
         let expectedValue = anyToAnyValue(expected)
@@ -223,6 +228,13 @@ enum CLIHelpers {
         case "variationValue": return evaluation.variationValue
         case "variableKey": return evaluation.variableKey
         case "variableOverrideIndex": return evaluation.variableOverrideIndex
+        case "variableOverrideKey": return evaluation.variableOverrideKey
+        case "variableOverridePath": return evaluation.variableOverridePath
+        case "requiredFeatures":
+            guard let value = evaluation.requiredFeatures,
+                  let data = try? JSONEncoder().encode(value),
+                  let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+            return object
         case "variableValue": return evaluation.variableValue?.rawValue
         default:
             return nil

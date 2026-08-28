@@ -5,7 +5,8 @@ public struct FeaturevisorOptions: Sendable {
     public var context: Context
     public var logLevel: LogLevel
     public var onDiagnostic: FeaturevisorDiagnosticHandler?
-    public var sticky: StickyFeatures?
+    public var stickyFeatures: StickyFeatures?
+    public var stickyVariables: StickyVariables?
     public var modules: [FeaturevisorModule]
 
     public init(
@@ -13,14 +14,16 @@ public struct FeaturevisorOptions: Sendable {
         context: Context = [:],
         logLevel: LogLevel = .info,
         onDiagnostic: FeaturevisorDiagnosticHandler? = nil,
-        sticky: StickyFeatures? = nil,
+        stickyFeatures: StickyFeatures? = nil,
+        stickyVariables: StickyVariables? = nil,
         modules: [FeaturevisorModule] = []
     ) {
         self.datafile = datafile
         self.context = context
         self.logLevel = logLevel
         self.onDiagnostic = onDiagnostic
-        self.sticky = sticky
+        self.stickyFeatures = stickyFeatures
+        self.stickyVariables = stickyVariables
         self.modules = modules
     }
 }
@@ -39,7 +42,8 @@ public final class Featurevisor: @unchecked Sendable {
     private var context: Context
     private var logLevel: LogLevel
     private let onDiagnostic: FeaturevisorDiagnosticHandler?
-    private var sticky: StickyFeatures?
+    private var stickyFeatures: StickyFeatures?
+    private var stickyVariables: StickyVariables?
 
     private var datafile: DatafileContent
     private var evaluationData: InstanceEvaluationDataProvider
@@ -52,7 +56,8 @@ public final class Featurevisor: @unchecked Sendable {
         self.context = options.context
         self.logLevel = options.logLevel
         self.onDiagnostic = options.onDiagnostic
-        self.sticky = options.sticky
+        self.stickyFeatures = options.stickyFeatures
+        self.stickyVariables = options.stickyVariables
         self.emitter = Emitter()
         self.datafile = emptyDatafile
         self.evaluationData = InstanceEvaluationDataProvider(datafile: emptyDatafile, reportDiagnostic: { _ in })
@@ -126,17 +131,30 @@ public final class Featurevisor: @unchecked Sendable {
         }
     }
 
-    public func setSticky(_ sticky: StickyFeatures, replace: Bool = false) {
+    public func setStickyFeatures(_ sticky: StickyFeatures, replace: Bool = false) {
         let values = lock.withLock { () -> (StickyFeatures, StickyFeatures)? in
             guard !closed else { return nil }
-            let previous = self.sticky ?? [:]
-            self.sticky = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
-            return (previous, self.sticky ?? [:])
+            let previous = self.stickyFeatures ?? [:]
+            self.stickyFeatures = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            return (previous, self.stickyFeatures ?? [:])
         }
         guard let (previousSticky, newSticky) = values else { return }
         let payload = getParamsForStickySetEvent(previousStickyFeatures: previousSticky, newStickyFeatures: newSticky, replace: replace)
-        reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "sticky_set", message: "Sticky features set", details: payload))
-        emitter.trigger(.stickySet, payload: EventPayload(payload))
+        reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "sticky_features_set", message: "Sticky features set", details: payload))
+        emitter.trigger(.stickyFeaturesSet, payload: EventPayload(payload))
+    }
+
+    public func setStickyVariables(_ sticky: StickyVariables, replace: Bool = false) {
+        let values = lock.withLock { () -> (StickyVariables, StickyVariables)? in
+            guard !closed else { return nil }
+            let previous = self.stickyVariables ?? [:]
+            self.stickyVariables = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            return (previous, self.stickyVariables ?? [:])
+        }
+        guard let values else { return }
+        let payload = getParamsForStickyVariablesSetEvent(previousStickyVariables: values.0, newStickyVariables: values.1, replace: replace)
+        reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "sticky_variables_set", message: "Sticky variables set", details: payload))
+        emitter.trigger(.stickyVariablesSet, payload: EventPayload(payload))
     }
 
     private func reader() -> InstanceEvaluationDataProvider { lock.withLock { evaluationData } }
@@ -145,7 +163,10 @@ public final class Featurevisor: @unchecked Sendable {
     public func getSegment(_ segmentKey: SegmentKey) -> Segment? { reader().getSegment(segmentKey) }
     public func getFeature(_ featureKey: String) -> Feature? { reader().getFeature(featureKey) }
     public func getFeatureKeys() -> [FeatureKey] { reader().getFeatureKeys() }
-    public func getVariableKeys(_ featureKey: FeatureKey) -> [String] { reader().getVariableKeys(featureKey) }
+    public func getVariableKeys(_ featureKey: FeatureKey? = nil) -> [String] {
+        guard let featureKey else { return reader().getGlobalVariableKeys() }
+        return reader().getVariableKeys(featureKey)
+    }
     public func hasVariations(_ featureKey: FeatureKey) -> Bool { reader().hasVariations(featureKey) }
 
     @discardableResult
@@ -281,7 +302,7 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     public func spawn(_ context: Context = [:], options: SpawnOptions = SpawnOptions()) -> FeaturevisorChildInstance {
-        FeaturevisorChildInstance(parent: self, context: getContext(context), sticky: options.sticky)
+        FeaturevisorChildInstance(parent: self, context: getContext(context), stickyFeatures: options.stickyFeatures, stickyVariables: options.stickyVariables)
     }
 
     private func dependencies(_ context: Context, options: OverrideOptions = OverrideOptions()) -> EvaluateDependencies {
@@ -289,7 +310,8 @@ public final class Featurevisor: @unchecked Sendable {
             (
                 self.context.merging(context, uniquingKeysWith: { _, new in new }),
                 evaluationData,
-                options.sticky ?? sticky
+                options.stickyFeatures ?? stickyFeatures,
+                options.stickyVariables ?? stickyVariables
             )
         }
         return EvaluateDependencies(
@@ -299,7 +321,8 @@ public final class Featurevisor: @unchecked Sendable {
             },
             modulesManager: modulesManager,
             evaluationData: snapshot.1,
-            sticky: snapshot.2,
+            stickyFeatures: snapshot.2,
+            stickyVariables: snapshot.3,
             defaultVariationValue: options.defaultVariationValue,
             defaultVariableValue: options.defaultVariableValue
         )
@@ -324,6 +347,26 @@ public final class Featurevisor: @unchecked Sendable {
     public func evaluateVariable(_ featureKey: FeatureKey, _ variableKey: VariableKey, context: Context = [:], options: OverrideOptions = OverrideOptions()) -> Evaluation {
         evaluateWithModules(EvaluateOptions(type: .variable, featureKey: featureKey, variableKey: variableKey, dependencies: dependencies(context, options: options)))
     }
+
+    public func evaluateVariable(_ variableKey: VariableKey, context: Context = [:], options: OverrideOptions = OverrideOptions()) -> Evaluation {
+        evaluateWithModules(EvaluateOptions(type: .variable, variableKey: variableKey, globalVariable: true, dependencies: dependencies(context, options: options)))
+    }
+
+    public func getVariable(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> VariableValue? {
+        let evaluation = evaluateVariable(variableKey, context: context, options: options)
+        let value = evaluation.variableValue ?? options.defaultVariableValue
+        if evaluation.globalVariable?.type == "json", case .string(let json)? = value,
+           let data = json.data(using: .utf8), let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) { return parsed }
+        return value
+    }
+
+    public func getVariableBoolean(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Bool? { getValueByType(getVariable(variableKey, context, options), fieldType: "boolean")?.asBool() }
+    public func getVariableString(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> String? { getValueByType(getVariable(variableKey, context, options), fieldType: "string")?.asString() }
+    public func getVariableInteger(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Int? { getValueByType(getVariable(variableKey, context, options), fieldType: "integer")?.asInt() }
+    public func getVariableDouble(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> Double? { getValueByType(getVariable(variableKey, context, options), fieldType: "double")?.asDouble() }
+    public func getVariableArray(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> [AnyValue]? { getValueByType(getVariable(variableKey, context, options), fieldType: "array")?.asArray() }
+    public func getVariableObject(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> [String: AnyValue]? { getValueByType(getVariable(variableKey, context, options), fieldType: "object")?.asObject() }
+    public func getVariableJSON(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> AnyValue? { getVariable(variableKey, context, options) }
 
     public func getVariable(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> VariableValue? {
         let evaluation = evaluateVariable(featureKey, variableKey, context: context, options: options)
@@ -364,7 +407,7 @@ public final class Featurevisor: @unchecked Sendable {
         getVariable(featureKey, variableKey, context, options)
     }
 
-    public func getAllEvaluations(_ context: Context = [:], _ featureKeys: [FeatureKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedFeatures {
+    public func getFeatureEvaluations(_ context: Context = [:], _ featureKeys: [FeatureKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedFeatures {
         var result: EvaluatedFeatures = [:]
         let reader = reader()
         let targetKeys = featureKeys.isEmpty ? reader.getFeatureKeys() : featureKeys
@@ -381,6 +424,14 @@ public final class Featurevisor: @unchecked Sendable {
         }
         return result
     }
+
+
+    public func getVariableEvaluations(_ context: Context = [:], _ variableKeys: [VariableKey] = [], _ options: OverrideOptions = OverrideOptions()) -> EvaluatedVariables {
+        var result: EvaluatedVariables = [:]
+        let keys = variableKeys.isEmpty ? reader().getGlobalVariableKeys() : variableKeys
+        for key in keys { if let value = getVariable(key, context, options) { result[key] = value } }
+        return result
+    }
 }
 
 private func mergeStoredDatafile(existing: DatafileContent, incoming: DatafileContent) -> DatafileContent {
@@ -389,7 +440,8 @@ private func mergeStoredDatafile(existing: DatafileContent, incoming: DatafileCo
         revision: incoming.revision,
         featurevisorVersion: incoming.featurevisorVersion,
         segments: existing.segments.merging(incoming.segments, uniquingKeysWith: { _, new in new }),
-        features: existing.features.merging(incoming.features, uniquingKeysWith: { _, new in new })
+        features: existing.features.merging(incoming.features, uniquingKeysWith: { _, new in new }),
+        variables: (existing.variables ?? [:]).merging(incoming.variables ?? [:], uniquingKeysWith: { _, new in new })
     )
 }
 

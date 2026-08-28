@@ -5,6 +5,7 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
     private let revision: String
     private let segments: [SegmentKey: Segment]
     private let features: [FeatureKey: Feature]
+    private let variables: [VariableKey: GlobalVariable]
     private let reportDiagnostic: FeaturevisorDiagnosticHandler
     private var parsedSegments: [SegmentKey: Segment] = [:]
     private var regexCache: [String: NSRegularExpression] = [:]
@@ -15,6 +16,7 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
         self.revision = datafile.revision
         self.segments = datafile.segments
         self.features = datafile.features
+        self.variables = datafile.variables ?? [:]
         self.reportDiagnostic = reportDiagnostic
     }
 
@@ -22,6 +24,9 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
     func getSchemaVersion() -> String { schemaVersion }
     func getFeatureKeys() -> [FeatureKey] { Array(features.keys) }
     func getFeature(_ key: FeatureKey) -> Feature? { features[key] }
+    func getGlobalVariableKeys() -> [VariableKey] { Array(variables.keys) }
+    func getGlobalVariable(_ key: VariableKey) -> GlobalVariable? { variables[key] }
+    func getSegmentKeys() -> [SegmentKey] { Array(segments.keys) }
     func getSegment(_ key: SegmentKey) -> Segment? {
         if let cached = lock.withLock({ parsedSegments[key] }) { return cached }
         guard var segment = segments[key] else { return nil }

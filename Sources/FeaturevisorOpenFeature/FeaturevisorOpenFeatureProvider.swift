@@ -16,6 +16,7 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private let targetingKeyField: String
     private let keySeparator: String
     private let variationKey: String
+    private let globalVariablePrefix: String
     private let onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)?
     private let ownsFeaturevisor: Bool
     private let eventHandler = EventHandler()
@@ -32,6 +33,7 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         targetingKeyField: String = "userId",
         keySeparator: String = ":",
         variationKey: String = "variation",
+        globalVariablePrefix: String = "variable",
         onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)? = nil
     ) {
         self.ownsFeaturevisor = featurevisor == nil
@@ -41,6 +43,8 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         self.targetingKeyField = targetingKeyField.isEmpty ? "userId" : targetingKeyField
         self.keySeparator = keySeparator.isEmpty ? ":" : keySeparator
         self.variationKey = variationKey.isEmpty ? "variation" : variationKey
+        self.globalVariablePrefix = globalVariablePrefix.isEmpty ? "variable" : globalVariablePrefix
+        precondition(!self.globalVariablePrefix.contains(self.keySeparator), "globalVariablePrefix must not contain keySeparator")
         self.onTrack = onTrack
 
         self.errorUnsubscribe = self.featurevisor.on(.error) { [weak self] payload in
@@ -124,7 +128,12 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         let evaluation: Evaluation
         var value: AnyValue?
 
-        if parts.selector == nil || parts.selector?.isEmpty == true {
+        if parts.feature == globalVariablePrefix, let variableKey = parts.selector, !variableKey.isEmpty {
+            evaluation = featurevisor.evaluateVariable(variableKey, context: fvContext, options: OverrideOptions(defaultVariableValue: defaultValue))
+            value = evaluation.variableValue
+            if evaluation.globalVariable?.type == "json", case .string(let json)? = value,
+               let data = json.data(using: .utf8), let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) { value = parsed }
+        } else if parts.selector == nil || parts.selector?.isEmpty == true {
             guard expected == .boolean else { return typeMismatch(key, defaultValue, expected) }
             evaluation = featurevisor.evaluateFlag(parts.feature, context: fvContext)
             if let enabled = evaluation.enabled { value = .bool(enabled) }
@@ -191,10 +200,10 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
 
     private func metadata(_ evaluation: Evaluation) -> FlagMetadata {
         var metadata: FlagMetadata = [
-            "featureKey": .string(evaluation.featureKey),
             "featurevisorReason": .string(evaluation.reason.rawValue),
             "schemaVersion": .string(featurevisor.getSchemaVersion()),
         ]
+        if !evaluation.featureKey.isEmpty { metadata["featureKey"] = .string(evaluation.featureKey) }
         let revision = featurevisor.getRevision()
         if !revision.isEmpty { metadata["revision"] = .string(revision) }
         if let value = evaluation.variableKey { metadata["variableKey"] = .string(value) }
@@ -203,6 +212,8 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         if let value = evaluation.bucketValue { metadata["bucketValue"] = .integer(Int64(value)) }
         if let value = evaluation.forceIndex { metadata["forceIndex"] = .integer(Int64(value)) }
         if let value = evaluation.variableOverrideIndex { metadata["variableOverrideIndex"] = .integer(Int64(value)) }
+        if let value = evaluation.variableOverrideKey { metadata["variableOverrideKey"] = .string(value) }
+        if let value = evaluation.variableOverridePath { metadata["variableOverridePath"] = .string(value.joined(separator: ".")) }
         return metadata
     }
 
@@ -211,7 +222,7 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         case .featureNotFound, .variableNotFound, .noVariations, .error: return Reason.error.rawValue
         case .required, .forced, .sticky, .rule, .variableOverrideVariation, .variableOverrideRule: return Reason.targetingMatch.rawValue
         case .allocated: return Reason.split.rawValue
-        case .disabled, .variationDisabled, .variableDisabled: return Reason.disabled.rawValue
+        case .disabled, .variationDisabled, .variableDisabled, .requiredFeaturesUnmet: return Reason.disabled.rawValue
         default: return Reason.defaultReason.rawValue
         }
     }

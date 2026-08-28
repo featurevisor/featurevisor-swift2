@@ -5,7 +5,8 @@ public struct EvaluateDependencies: Sendable {
     var reportDiagnostic: @Sendable (FeaturevisorDiagnostic) -> Void
     var modulesManager: ModulesManager
     var evaluationData: InstanceEvaluationDataProvider
-    public var sticky: StickyFeatures?
+    public var stickyFeatures: StickyFeatures?
+    public var stickyVariables: StickyVariables?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
 
@@ -14,7 +15,8 @@ public struct EvaluateDependencies: Sendable {
         reportDiagnostic: @escaping @Sendable (FeaturevisorDiagnostic) -> Void,
         modulesManager: ModulesManager,
         evaluationData: InstanceEvaluationDataProvider,
-        sticky: StickyFeatures? = nil,
+        stickyFeatures: StickyFeatures? = nil,
+        stickyVariables: StickyVariables? = nil,
         defaultVariationValue: VariationValue? = nil,
         defaultVariableValue: VariableValue? = nil
     ) {
@@ -22,7 +24,8 @@ public struct EvaluateDependencies: Sendable {
         self.reportDiagnostic = reportDiagnostic
         self.modulesManager = modulesManager
         self.evaluationData = evaluationData
-        self.sticky = sticky
+        self.stickyFeatures = stickyFeatures
+        self.stickyVariables = stickyVariables
         self.defaultVariationValue = defaultVariationValue
         self.defaultVariableValue = defaultVariableValue
     }
@@ -32,12 +35,14 @@ public struct EvaluateOptions: Sendable {
     public var type: EvaluationType
     public var featureKey: FeatureKey
     public var variableKey: VariableKey?
+    public var globalVariable: Bool
     public var dependencies: EvaluateDependencies
 
-    init(type: EvaluationType, featureKey: FeatureKey, variableKey: VariableKey? = nil, dependencies: EvaluateDependencies) {
+    init(type: EvaluationType, featureKey: FeatureKey = "", variableKey: VariableKey? = nil, globalVariable: Bool = false, dependencies: EvaluateDependencies) {
         self.type = type
         self.featureKey = featureKey
         self.variableKey = variableKey
+        self.globalVariable = globalVariable
         self.dependencies = dependencies
     }
 }
@@ -45,9 +50,10 @@ public struct EvaluateOptions: Sendable {
 func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     var updated = options
     for module in updated.dependencies.modulesManager.getAll() {
-        if let before = module.before {
+        if let before = module.beforeEvaluation {
             updated = before(updated)
         }
+        if !updated.globalVariable, let before = module.before { updated = before(updated) }
     }
 
     var evaluation = evaluate(updated)
@@ -63,9 +69,10 @@ func evaluateWithModules(_ options: EvaluateOptions) -> Evaluation {
     }
 
     for module in updated.dependencies.modulesManager.getAll() {
-        if let after = module.after {
+        if let after = module.afterEvaluation {
             evaluation = after(evaluation, updated)
         }
+        if !updated.globalVariable, let after = module.after { evaluation = after(evaluation, updated) }
     }
 
     return evaluation
@@ -108,6 +115,10 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
     let modulesManager = options.dependencies.modulesManager
     let reportDiagnostic = options.dependencies.reportDiagnostic
 
+    if options.globalVariable, let variableKey {
+        return evaluateGlobalVariable(variableKey, options: options)
+    }
+
     if type != .flag {
             let flagEvaluation = evaluate(EvaluateOptions(type: .flag, featureKey: featureKey, dependencies: options.dependencies))
 
@@ -147,7 +158,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
             }
         }
 
-        if let sticky = options.dependencies.sticky?[featureKey] {
+        if let sticky = options.dependencies.stickyFeatures?[featureKey] {
             if type == .flag {
                 var stickyEvaluation = Evaluation(type: type, featureKey: featureKey, reason: .sticky)
                 stickyEvaluation.sticky = sticky
@@ -260,7 +271,14 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
             }
         }
 
-        if type == .flag, let required = feature.required, !required.isEmpty {
+        if type == .flag, let requiredFeatures = feature.requiredFeatures, !requiredFeatures.isEmpty {
+            if !requiredFeaturesAreMatched(requiredFeatures, options: options) {
+                var out = Evaluation(type: type, featureKey: featureKey, reason: .required)
+                out.requiredFeatures = requiredFeatures
+                out.enabled = false
+                return out
+            }
+        } else if type == .flag, let required = feature.required, !required.isEmpty {
             let requiredEnabled = required.allSatisfy { requiredValue in
                 let requiredKey: String
                 let requiredVariation: String?
@@ -406,7 +424,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         if type == .variable, let variableKey {
             if let matchedTraffic {
                 if let overrides = matchedTraffic.variableOverrides?[variableKey],
-                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, evaluationData: evaluationData) {
+                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, options: options) {
                     let override = overrides[overrideIndex]
                     var out = Evaluation(type: type, featureKey: featureKey, reason: .variableOverrideRule)
                     out.bucketKey = bucketKey
@@ -417,6 +435,8 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                     out.variableSchema = variableSchema
                     out.variableValue = override.value
                     out.variableOverrideIndex = overrideIndex
+                    out.variableOverrideKey = override.key
+                    out.variableOverridePath = override.keyPath
                     return out
                 }
 
@@ -445,7 +465,7 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
             if let variationValue,
                let variation = feature.variations?.first(where: { $0.value == variationValue }) {
                 if let overrides = variation.variableOverrides?[variableKey],
-                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, context: context, evaluationData: evaluationData) {
+                   let overrideIndex = firstMatchedOverrideIndex(overrides: overrides, options: options) {
                     let override = overrides[overrideIndex]
                     var out = Evaluation(type: type, featureKey: featureKey, reason: .variableOverrideVariation)
                     out.bucketKey = bucketKey
@@ -456,6 +476,8 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
                     out.variableSchema = variableSchema
                     out.variableValue = override.value
                     out.variableOverrideIndex = overrideIndex
+                    out.variableOverrideKey = override.key
+                    out.variableOverridePath = override.keyPath
                     return out
                 }
 
@@ -505,22 +527,99 @@ func evaluate(_ options: EvaluateOptions) -> Evaluation {
         return out
 }
 
-private func firstMatchedOverrideIndex(overrides: [VariableOverride], context: Context, evaluationData: InstanceEvaluationDataProvider) -> Int? {
+private func firstMatchedOverrideIndex(overrides: [VariableOverride], options: EvaluateOptions) -> Int? {
+    let context = options.dependencies.context
+    let evaluationData = options.dependencies.evaluationData
     for (index, override) in overrides.enumerated() {
-        if let conditions = override.conditions {
-            if evaluationData.allConditionsAreMatched(parseConditionIfStringified(conditions), context: context) {
-                return index
-            }
-        }
-
-        if let segments = override.segments {
-            if evaluationData.allSegmentsAreMatched(parseSegmentsIfStringified(segments), context: context) {
-                return index
-            }
-        }
+        if let conditions = override.conditions,
+           !evaluationData.allConditionsAreMatched(parseConditionIfStringified(conditions), context: context) { continue }
+        if let segments = override.segments,
+           !evaluationData.allSegmentsAreMatched(parseSegmentsIfStringified(segments), context: context) { continue }
+        if let required = override.requiredFeatures,
+           !requiredFeaturesAreMatched(required, options: options) { continue }
+        if override.conditions != nil || override.segments != nil || override.requiredFeatures != nil { return index }
     }
 
     return nil
+}
+
+private func cleanDependencies(_ dependencies: EvaluateDependencies) -> EvaluateDependencies {
+    EvaluateDependencies(
+        context: dependencies.context,
+        reportDiagnostic: dependencies.reportDiagnostic,
+        modulesManager: dependencies.modulesManager,
+        evaluationData: dependencies.evaluationData,
+        stickyFeatures: dependencies.stickyFeatures
+    )
+}
+
+private func requiredFeaturesAreMatched(_ requirements: [RequiredFeature], options: EvaluateOptions) -> Bool {
+    let dependencies = cleanDependencies(options.dependencies)
+    return requirements.allSatisfy { requirement in
+        let key: FeatureKey
+        let enabled: Bool
+        let variation: VariationValue?
+        switch requirement {
+        case .feature(let value):
+            key = value
+            enabled = true
+            variation = nil
+        case .options(let value):
+            key = value.feature
+            enabled = value.enabled ?? true
+            variation = value.variation
+        }
+        let flag = evaluateWithModules(EvaluateOptions(type: .flag, featureKey: key, dependencies: dependencies))
+        guard (flag.enabled == true) == enabled else { return false }
+        guard let variation else { return true }
+        return evaluateWithModules(EvaluateOptions(type: .variation, featureKey: key, dependencies: dependencies)).variationValue == variation
+    }
+}
+
+private func evaluateGlobalVariable(_ variableKey: VariableKey, options: EvaluateOptions) -> Evaluation {
+    let dependencies = options.dependencies
+    if let sticky = dependencies.stickyVariables?[variableKey] {
+        var out = Evaluation(type: .variable, featureKey: "", reason: .sticky)
+        out.variableKey = variableKey
+        out.variableValue = sticky
+        return out
+    }
+
+    guard let variable = dependencies.evaluationData.getGlobalVariable(variableKey) else {
+        var out = Evaluation(type: .variable, featureKey: "", reason: .variableNotFound)
+        out.variableKey = variableKey
+        return out
+    }
+
+    if let required = variable.requiredFeatures,
+       !requiredFeaturesAreMatched(required, options: options) {
+        var out = Evaluation(type: .variable, featureKey: "", reason: .requiredFeaturesUnmet)
+        out.variableKey = variableKey
+        out.globalVariable = variable
+        out.requiredFeatures = required
+        if variable.useDefaultWhenDisabled == true { out.variableValue = variable.defaultValue }
+        else { out.variableValue = variable.disabledValue }
+        return out
+    }
+
+    if let overrides = variable.overrides,
+       let index = firstMatchedOverrideIndex(overrides: overrides, options: options) {
+        let matched = overrides[index]
+        var out = Evaluation(type: .variable, featureKey: "", reason: .variableOverrideRule)
+        out.variableKey = variableKey
+        out.variableValue = matched.value
+        out.globalVariable = variable
+        out.variableOverrideIndex = index
+        out.variableOverrideKey = matched.key
+        out.variableOverridePath = matched.keyPath
+        return out
+    }
+
+    var out = Evaluation(type: .variable, featureKey: "", reason: .variableDefault)
+    out.variableKey = variableKey
+    out.variableValue = variable.defaultValue
+    out.globalVariable = variable
+    return out
 }
 
 private func parseConditionIfStringified(_ condition: Condition) -> Condition {

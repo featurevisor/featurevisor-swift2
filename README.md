@@ -19,8 +19,9 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 - [Getting variation](#getting-variation)
 - [Getting variables](#getting-variables)
   - [Type specific methods](#type-specific-methods)
-- [Getting all evaluations](#getting-all-evaluations)
-- [Sticky](#sticky)
+- [Getting global variables](#getting-global-variables)
+- [Getting aggregate evaluations](#getting-aggregate-evaluations)
+- [Sticky features and variables](#sticky-features-and-variables)
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
@@ -35,7 +36,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
-  - [`sticky_set`](#sticky_set)
+  - [`sticky_features_set` and `sticky_variables_set`](#sticky_features_set-and-sticky_variables_set)
   - [`error`](#error)
 - [Evaluation details](#evaluation-details)
 - [Modules](#modules)
@@ -59,7 +60,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 In your Swift application, add this package using Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "2.0.0")
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.0.0")
 ```
 
 Then add the product dependency:
@@ -267,44 +268,55 @@ f.getVariableJSON(featureKey, variableKey, context)
 
 Type specific methods do not coerce strings or booleans into numbers. They return `nil` when the value does not match the requested type.
 
-## Getting all evaluations
+## Getting global variables
+
+Global variables use the same methods with a single variable key:
+
+```swift
+let message = f.getVariableString("welcomeMessage", context)
+let value = f.getVariable("checkoutSettings", context)
+let evaluation = f.evaluateVariable("checkoutSettings", context: context)
+```
+
+Global variables resolve sticky values first, then required features, then the first matching override, and finally their default value.
+
+## Getting aggregate evaluations
 
 You can get evaluations of all features available in the SDK instance:
 
 ```swift
-let allEvaluations = f.getAllEvaluations([:])
+let allEvaluations = f.getFeatureEvaluations([:])
 print(allEvaluations)
+
+let globalVariables = f.getVariableEvaluations([:])
 ```
 
 This is handy especially when you want to pass all evaluations from a backend application to the frontend.
 
-## Sticky
+## Sticky features and variables
 
 For the lifecycle of the SDK instance in your application, you can set some features with sticky values, meaning that they will not be evaluated against the fetched [datafile](https://featurevisor.com/docs/building-datafiles/):
 
-Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides; use `SpawnOptions(sticky: ...)` when a child needs its own sticky state.
-
-### Initialize with sticky
+Sticky values belong to an SDK or child instance. Feature sticky values and global variable sticky values are independent.
 
 ```swift
 let f = createFeaturevisor(
     FeaturevisorOptions(
-        sticky: [
+        stickyFeatures: [
             "myFeatureKey": EvaluatedFeature(
                 enabled: true,
                 variation: "treatment",
                 variables: ["myVariableKey": .string("myVariableValue")]
             ),
             "anotherFeatureKey": EvaluatedFeature(enabled: false),
-        ]
+        ],
+        stickyVariables: ["welcomeMessage": .string("Welcome back")]
     )
 )
 ```
 
-### Set sticky afterwards
-
 ```swift
-f.setSticky([
+f.setStickyFeatures([
     "myFeatureKey": EvaluatedFeature(
         enabled: true,
         variation: "treatment",
@@ -312,6 +324,8 @@ f.setSticky([
     ),
     "anotherFeatureKey": EvaluatedFeature(enabled: false),
 ], replace: true)
+
+f.setStickyVariables(["welcomeMessage": .string("Welcome back")], replace: true)
 ```
 
 ## Setting datafile
@@ -332,7 +346,7 @@ f.setDatafile(json: jsonString)
 
 By default, `setDatafile` merges the incoming datafile with the SDK instance's existing datafile:
 
-- incoming `features` and `segments` override matching keys
+- incoming `features`, `segments`, and global `variables` override matching keys
 - existing `features` and `segments` that are missing from the incoming datafile are kept
 - `revision`, `schemaVersion`, and `featurevisorVersion` are taken from the incoming datafile
 
@@ -451,14 +465,19 @@ let unsubscribe = f.on(.contextSet) { _ in
 unsubscribe()
 ```
 
-### `sticky_set`
+### `sticky_features_set` and `sticky_variables_set`
 
 ```swift
-let unsubscribe = f.on(.stickySet) { _ in
-    // handle sticky updates
+let featureUnsubscribe = f.on(.stickyFeaturesSet) { _ in
+    // handle sticky feature updates
 }
 
-unsubscribe()
+let variableUnsubscribe = f.on(.stickyVariablesSet) { _ in
+    // handle sticky global variable updates
+}
+
+featureUnsubscribe()
+variableUnsubscribe()
 ```
 
 ### `error`
@@ -483,6 +502,7 @@ If you need evaluation metadata, use:
 let flagDetails = f.evaluateFlag("my_feature")
 let variationDetails = f.evaluateVariation("my_feature")
 let variableDetails = f.evaluateVariable("my_feature", "my_variable")
+let globalVariableDetails = f.evaluateVariable("welcomeMessage")
 ```
 
 ## Modules
@@ -508,6 +528,7 @@ let module = FeaturevisorModule(
         updated.dependencies.context["someAdditionalAttribute"] = .string("value")
         return updated
     },
+    beforeEvaluation: { options in options },
     bucketKey: { options in
         options.bucketKey
     },
@@ -517,6 +538,7 @@ let module = FeaturevisorModule(
     after: { evaluation, _ in
         evaluation
     },
+    afterEvaluation: { evaluation, _ in evaluation },
     close: {
         // clean up module resources
     }
@@ -549,6 +571,7 @@ let enabled = child.isEnabled("my_feature")
 let flagEvaluation = child.evaluateFlag("my_feature")
 let variationEvaluation = child.evaluateVariation("my_feature")
 let variableEvaluation = child.evaluateVariable("my_feature", "my_variable")
+let globalVariable = child.getVariable("welcomeMessage")
 ```
 
 A child snapshots the parent keys that exist when it is spawned. Child values win for those keys. Parent keys introduced later are still inherited. Calling `close()` removes both child-owned listeners and subscriptions delegated to the parent.
@@ -601,7 +624,7 @@ swift run featurevisor assess-distribution \
 The package exposes `FeaturevisorOpenFeature` as a separate library product. Targets using it should declare both package dependencies:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "2.0.0"),
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.0.0"),
 .package(url: "https://github.com/open-feature/swift-sdk.git", from: "0.5.0")
 ```
 
@@ -634,7 +657,7 @@ let enabled = client.getBooleanValue(
 )
 ```
 
-Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Lists, structures, and JSON variables use the object resolver.
+Use `checkout` for a flag, `checkout:variation` for its variation, `checkout:title` for its `title` variable, and `variable:welcomeMessage` for a global variable. Boolean variables use the boolean resolver. Lists, structures, and JSON variables use the object resolver.
 
 The provider maps Featurevisor values to OpenFeature resolvers as follows:
 
@@ -643,10 +666,11 @@ The provider maps Featurevisor values to OpenFeature resolvers as follows:
 | `feature` | Boolean flag |
 | `feature:variation` | String variation |
 | `feature:variable` | Resolver matching the variable schema |
+| `variable:key` | Resolver matching the global variable type |
 
 Integer variables can be resolved with either the integer or double resolver. Non-finite doubles are rejected with `TYPE_MISMATCH`. Invalid JSON variables also return `TYPE_MISMATCH` and the caller's default value.
 
-OpenFeature's targeting key maps to `userId` by default. `targetingKeyField`, `keySeparator`, and `variationKey` can customize the mapping. Call `provider.close()` when the application owns the provider lifecycle and is finished with it.
+OpenFeature's targeting key maps to `userId` by default. `targetingKeyField`, `keySeparator`, `variationKey`, and `globalVariablePrefix` can customize the mapping. The global variable prefix defaults to `variable` and cannot contain the separator. Call `provider.close()` when the application owns the provider lifecycle and is finished with it.
 
 You can initialize the provider from raw JSON when the application has not decoded a datafile yet:
 
@@ -674,12 +698,12 @@ Featurevisor evaluation reasons map to OpenFeature reasons:
 | --- | --- |
 | `required`, `forced`, `sticky`, `rule`, variable overrides | `TARGETING_MATCH` |
 | `allocated` | `SPLIT` |
-| disabled flag, variation, or variable | `DISABLED` |
+| disabled flag, variation, or variable, and unmet global variable requirements | `DISABLED` |
 | no match, out of range, variable default | `DEFAULT` |
 | missing feature, variable, or variations | `ERROR` with `FLAG_NOT_FOUND` |
 | evaluation error | `ERROR` with `GENERAL` |
 
-Resolution metadata includes `featureKey`, `featurevisorReason`, `schemaVersion`, and `revision`. It also includes `variableKey`, `ruleKey`, `bucketKey`, `bucketValue`, `forceIndex`, and `variableOverrideIndex` when those values are available. Variation resolutions populate OpenFeature's `variant` field.
+Resolution metadata includes `featureKey` when present, `featurevisorReason`, `schemaVersion`, and `revision`. It also includes `variableKey`, `ruleKey`, `bucketKey`, `bucketValue`, `forceIndex`, `variableOverrideIndex`, `variableOverrideKey`, and `variableOverridePath` when those values are available. Variation resolutions populate OpenFeature's `variant` field.
 
 The provider forwards OpenFeature tracking calls to `onTrack`. Closing a provider it owns closes Featurevisor modules and subscriptions. Closing a provider created with a caller-owned Featurevisor instance only removes provider subscriptions.
 
@@ -709,7 +733,7 @@ To verify the public products from clean consumer packages:
 ./scripts/verify-consumers.sh
 ```
 
-Release tags use semantic versions such as `v2.0.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
+Release tags use semantic versions such as `v3.0.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
 
 ## License
 

@@ -16,7 +16,7 @@ final class InstanceTests: XCTestCase {
         XCTAssertEqual(sdk.getVariableString("test", "color", ["userId": .string("123")]), "blue")
         XCTAssertEqual(sdk.getVariableInteger("test", "count", ["userId": .string("123")]), 2)
 
-        let all = sdk.getAllEvaluations(["userId": .string("123")])
+        let all = sdk.getFeatureEvaluations(["userId": .string("123")])
         XCTAssertEqual(all["test"]?.enabled, true)
     }
 
@@ -28,12 +28,12 @@ final class InstanceTests: XCTestCase {
         let u1 = sdk.on(.contextSet) { payload in
             contextEvent.value = payload.params["replaced"] == .bool(false)
         }
-        let u2 = sdk.on(.stickySet) { payload in
+        let u2 = sdk.on(.stickyFeaturesSet) { payload in
             stickyEvent.value = payload.params["features"] == .array([.string("test")])
         }
 
         sdk.setContext(["country": .string("nl")])
-        sdk.setSticky(["test": EvaluatedFeature(enabled: true)])
+        sdk.setStickyFeatures(["test": EvaluatedFeature(enabled: true)])
 
         u1(); u2()
 
@@ -51,11 +51,11 @@ final class InstanceTests: XCTestCase {
         ))
 
         sdk.setDatafile(TestFixtures.basicDatafile())
-        sdk.setSticky(["test": EvaluatedFeature(enabled: true)])
+        sdk.setStickyFeatures(["test": EvaluatedFeature(enabled: true)])
         sdk.setContext(["country": .string("nl")])
 
         XCTAssertTrue(diagnostics.value.contains("datafile_set"))
-        XCTAssertTrue(diagnostics.value.contains("sticky_set"))
+        XCTAssertTrue(diagnostics.value.contains("sticky_features_set"))
         XCTAssertTrue(diagnostics.value.contains("context_set"))
     }
 
@@ -131,7 +131,7 @@ final class InstanceTests: XCTestCase {
         DispatchQueue.concurrentPerform(iterations: 1_000) { index in
             if index.isMultiple(of: 10) {
                 sdk.setContext(["iteration": .int(index)])
-                sdk.setSticky(["test": EvaluatedFeature(enabled: true)])
+                sdk.setStickyFeatures(["test": EvaluatedFeature(enabled: true)])
                 var datafile = TestFixtures.basicDatafile()
                 datafile.revision = "\(index)"
                 sdk.setDatafile(datafile, replace: true)
