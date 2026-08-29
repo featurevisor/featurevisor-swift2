@@ -3,7 +3,8 @@ import Foundation
 public enum EventName: String, Sendable {
     case datafileSet = "datafile_set"
     case contextSet = "context_set"
-    case stickySet = "sticky_set"
+    case stickyFeaturesSet = "sticky_features_set"
+    case stickyVariablesSet = "sticky_variables_set"
     case error
 }
 

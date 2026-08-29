@@ -62,8 +62,8 @@ struct BenchmarkCommand {
             print("Environment is required")
             return 1
         }
-        guard !options.feature.isEmpty else {
-            print("Feature is required")
+        guard !options.feature.isEmpty || !options.variable.isEmpty else {
+            print("Feature or global variable is required")
             return 1
         }
 
@@ -91,14 +91,18 @@ struct BenchmarkCommand {
         let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.logLevel(options)))
 
         print("\nBenchmark Featurevisor feature")
-        print("  Feature: \(options.feature)")
+        if options.feature.isEmpty { print("  Global variable: \(options.variable)") }
+        else { print("  Feature: \(options.feature)") }
         print("  Environment: \(options.environment)")
         if let target { print("  Target: \(target)") }
         print("  Iterations: \(options.n)")
         print("Against context: \(options.context.isEmpty ? "{}" : options.context)")
 
         let output: BenchmarkOutput
-        if options.variation {
+        if options.feature.isEmpty {
+            print("Evaluating global variable \"\(options.variable)\" \(options.n) times...")
+            output = benchmark(options.n) { sdk.getVariable(options.variable, context) }
+        } else if options.variation {
             print("Evaluating variation \(options.n) times...")
             output = benchmark(options.n) {
                 sdk.getVariation(options.feature, context).map { .string($0) }

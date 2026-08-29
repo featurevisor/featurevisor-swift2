@@ -24,7 +24,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/open-feature/swift-sdk.git", from: "0.5.0")
+        .package(url: "https://github.com/open-feature/swift-sdk.git", .upToNextMinor(from: "0.5.0"))
     ],
     targets: [
         .target(

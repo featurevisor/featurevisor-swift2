@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected a semantic version tag such as v2.0.0"
+            echo "Expected a semantic version tag such as v3.0.0"
             exit 1
           fi
           version="${GITHUB_REF_NAME#v}"

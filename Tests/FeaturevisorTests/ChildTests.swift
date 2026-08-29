@@ -13,7 +13,7 @@ final class ChildTests: XCTestCase {
         XCTAssertEqual(child.evaluateVariation("test").variation?.value, "control")
         XCTAssertEqual(child.evaluateVariable("test", "color").variableValue, .string("blue"))
 
-        child.setSticky(["another": EvaluatedFeature(enabled: true)])
+        child.setStickyFeatures(["another": EvaluatedFeature(enabled: true)])
         XCTAssertTrue(child.isEnabled("another"))
         XCTAssertEqual(child.evaluateFlag("another").reason, .sticky)
     }
@@ -38,11 +38,11 @@ final class ChildTests: XCTestCase {
         let delegatedCalls = ConcurrencyBox(0)
 
         _ = child.on(.contextSet) { payload in contextPayloads.mutate { $0.append(payload) } }
-        _ = child.on(.stickySet) { payload in stickyPayloads.mutate { $0.append(payload) } }
+        _ = child.on(.stickyFeaturesSet) { payload in stickyPayloads.mutate { $0.append(payload) } }
         _ = child.on(.datafileSet) { _ in delegatedCalls.mutate { $0 += 1 } }
 
         child.setContext(["plan": .string("pro")])
-        child.setSticky(["test": EvaluatedFeature(enabled: true)])
+        child.setStickyFeatures(["test": EvaluatedFeature(enabled: true)])
 
         XCTAssertEqual(contextPayloads.value[0].params["replaced"], .bool(false))
         XCTAssertEqual(

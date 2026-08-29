@@ -22,11 +22,12 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
         func mutate(_ body: (inout T) -> Void) { lock.lock(); body(&stored); lock.unlock() }
     }
 
-    private let datafileJSON = #"{"schemaVersion":"2","revision":"openfeature-test","segments":{},"features":{"checkout":{"bucketBy":"userId","variations":[{"value":"on","variables":{"title":"Hello","count":3,"ratio":1.5,"visible":true,"items":["a"],"config":{"color":"blue"},"json":"{\"nested\":true}"}}],"variablesSchema":{"title":{"type":"string","defaultValue":"Default"},"count":{"type":"integer","defaultValue":0},"ratio":{"type":"double","defaultValue":0},"visible":{"type":"boolean","defaultValue":false},"items":{"type":"array","defaultValue":[]},"config":{"type":"object","defaultValue":{}},"json":{"type":"json","defaultValue":"{}"}},"force":[{"conditions":{"attribute":"userId","operator":"equals","value":"forced-user"},"enabled":true,"variation":"on"}],"traffic":[{"key":"all","segments":"*","percentage":100000,"variation":"on"}]}}}"#
+    private let datafileJSON = #"{"schemaVersion":"2","revision":"openfeature-test","segments":{},"features":{"checkout":{"bucketBy":"userId","variations":[{"value":"on","variables":{"title":"Hello","count":3,"ratio":1.5,"visible":true,"items":["a"],"config":{"color":"blue"},"json":"{\"nested\":true}"}}],"variablesSchema":{"title":{"type":"string","defaultValue":"Default"},"count":{"type":"integer","defaultValue":0},"ratio":{"type":"double","defaultValue":0},"visible":{"type":"boolean","defaultValue":false},"items":{"type":"array","defaultValue":[]},"config":{"type":"object","defaultValue":{}},"json":{"type":"json","defaultValue":"{}"}},"force":[{"conditions":{"attribute":"userId","operator":"equals","value":"forced-user"},"enabled":true,"variation":"on"}],"traffic":[{"key":"all","segments":"*","percentage":100000,"variation":"on"}]}},"variables":{"welcomeMessage":{"type":"string","defaultValue":"Welcome"},"enabled":{"type":"boolean","defaultValue":true}}}"#
 
     private func provider(
         keySeparator: String = ":",
         variationKey: String = "variation",
+        globalVariablePrefix: String = "variable",
         targetingKeyField: String = "userId",
         modules: [FeaturevisorModule] = [],
         onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)? = nil
@@ -36,6 +37,7 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
             targetingKeyField: targetingKeyField,
             keySeparator: keySeparator,
             variationKey: variationKey,
+            globalVariablePrefix: globalVariablePrefix,
             onTrack: onTrack
         )
     }
@@ -52,6 +54,20 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
         XCTAssertEqual(try provider.getObjectEvaluation(key: "checkout:items", defaultValue: .list([]), context: context).value, .list([.string("a")]))
         XCTAssertEqual(try provider.getObjectEvaluation(key: "checkout:config", defaultValue: .structure([:]), context: context).value, .structure(["color": .string("blue")]))
         XCTAssertEqual(try provider.getObjectEvaluation(key: "checkout:json", defaultValue: .structure([:]), context: context).value, .structure(["nested": .boolean(true)]))
+        XCTAssertEqual(try provider.getStringEvaluation(key: "variable:welcomeMessage", defaultValue: "fallback", context: context).value, "Welcome")
+        XCTAssertTrue(try provider.getBooleanEvaluation(key: "variable:enabled", defaultValue: false, context: context).value)
+    }
+
+    func testSupportsCustomGlobalVariablePrefix() throws {
+        let custom = try provider(keySeparator: "/", globalVariablePrefix: "$global")
+        XCTAssertEqual(
+            try custom.getStringEvaluation(key: "$global/welcomeMessage", defaultValue: "fallback", context: nil).value,
+            "Welcome"
+        )
+        XCTAssertEqual(
+            try custom.getStringEvaluation(key: "variable/welcomeMessage", defaultValue: "fallback", context: nil).errorCode,
+            .flagNotFound
+        )
     }
 
     func testErrorsCustomGrammarTrackingAndClose() throws {

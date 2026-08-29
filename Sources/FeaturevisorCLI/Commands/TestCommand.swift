@@ -63,6 +63,15 @@ struct TestCommand {
                 continue
             }
 
+            if let variableKey = test["variable"] as? String {
+                let result = runGlobalVariableTest(variableKey: variableKey, test: test, options: options, datafileCache: datafileCache)
+                summary.passedTests += result.ok ? 1 : 0
+                summary.failedTests += result.ok ? 0 : 1
+                summary.passedAssertions += result.passed
+                summary.failedAssertions += result.failed
+                continue
+            }
+
             if let segmentKey = test["segment"] as? String {
                 let result = runSegmentTest(segmentKey: segmentKey, test: test, segmentsByKey: segments, options: options)
                 summary.passedTests += result.ok ? 1 : 0
@@ -83,6 +92,57 @@ struct TestCommand {
         print("\u{001B}[31mTest specs: \(summary.passedTests) passed, \(summary.failedTests) failed\u{001B}[0m")
         print("\u{001B}[31mAssertions: \(summary.passedAssertions) passed, \(summary.failedAssertions) failed\u{001B}[0m")
         return 1
+    }
+
+    private func runGlobalVariableTest(variableKey: String, test: [String: Any], options: CLIOptions, datafileCache: [String: DatafileContent]) -> (ok: Bool, passed: Int, failed: Int) {
+        var assertions = test["assertions"] as? [[String: Any]] ?? []
+        if !options.targets.isEmpty {
+            assertions = assertions.filter { assertion in
+                guard let target = assertion["target"] as? String else { return true }
+                return options.targets.contains(target)
+            }
+        }
+        var passed = 0
+        var failed = 0
+        var reports: [AssertionReport] = []
+        for assertion in assertions {
+            let description = assertion["description"] as? String ?? "assertion"
+            let key = datafileCacheKeyForAssertion(assertion, datafileCache: datafileCache)
+            guard let datafile = datafileCache[key] else {
+                failed += 1
+                reports.append(AssertionReport(description: description, passed: false, messages: ["=> datafile not found for assertion"]))
+                continue
+            }
+            let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
+            if let sticky = CLIHelpers.anyToStickyVariables(assertion["stickyVariables"]) { sdk.setStickyVariables(sticky, replace: true) }
+            let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
+            let defaultValue = assertion["defaultVariableValue"].map(CLIHelpers.anyToAnyValue)
+            let evaluation = sdk.evaluateVariable(variableKey, context: context, options: OverrideOptions(defaultVariableValue: defaultValue))
+            var messages: [String] = []
+            if let expected = assertion["expectedValue"], !CLIHelpers.compareExpected(evaluation.variableValue ?? defaultValue, expected: expected) {
+                messages.append(formatMismatch(type: "variable", expected: expected, actual: (evaluation.variableValue ?? defaultValue)?.rawValue, variableKey: variableKey))
+            }
+            if let expectedEvaluation = assertion["expectedEvaluation"] as? [String: Any] {
+                for (field, expected) in expectedEvaluation where !CLIHelpers.compareAnyExpected(CLIHelpers.evaluationFieldValue(evaluation, key: field), expected: expected) {
+                    messages.append(formatMismatch(type: "evaluation", expected: expected, actual: CLIHelpers.evaluationFieldValue(evaluation, key: field), variableKey: variableKey, evaluationType: "variable", evaluationKey: field))
+                }
+            }
+            if messages.isEmpty { passed += 1 } else { failed += 1 }
+            reports.append(AssertionReport(description: description, passed: messages.isEmpty, messages: messages))
+        }
+        let ok = failed == 0
+        if !options.onlyFailures || !ok {
+            let testKey = test["key"] as? String ?? variableKey
+            let status = ok ? "passed" : "failed"
+            print("\nTesting: \(testKey)")
+            print("  variable \"\(variableKey)\":")
+            for report in reports {
+                if report.passed { if !options.onlyFailures { print("  \u{2714} \(report.description)") } }
+                else { print("\u{001B}[31m  \u{2718} \(report.description)\u{001B}[0m"); report.messages.forEach { print("\u{001B}[31m    \($0)\u{001B}[0m") } }
+            }
+            print("  => \(status) (\(passed) passed, \(failed) failed)")
+        }
+        return (ok, passed, failed)
     }
 
     private func loadSegments(_ options: CLIOptions) -> [String: Any] {
@@ -174,7 +234,7 @@ struct TestCommand {
             FeaturevisorOptions(
                 datafile: datafile,
                 logLevel: CLIHelpers.logLevel(options),
-                sticky: sticky,
+                stickyFeatures: sticky,
                 modules: [module]
             )
         )
@@ -316,7 +376,7 @@ struct TestCommand {
                     }
                     let childContext = CLIHelpers.parseContext(childContextMap)
                     let childSticky = CLIHelpers.anyToSticky(assertion["sticky"])
-                    let child = sdk.spawn(childContext, options: SpawnOptions(sticky: childSticky))
+                    let child = sdk.spawn(childContext, options: SpawnOptions(stickyFeatures: childSticky))
 
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
                        child.isEnabled(featureKey) != expectedEnabled {

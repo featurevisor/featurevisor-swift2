@@ -10,6 +10,7 @@ public enum EvaluationReason: String, Codable, Sendable {
     case featureNotFound = "feature_not_found"
     case disabled = "disabled"
     case required = "required"
+    case requiredFeaturesUnmet = "required_features_unmet"
     case outOfRange = "out_of_range"
     case noVariations = "no_variations"
     case variationDisabled = "variation_disabled"
@@ -28,7 +29,7 @@ public enum EvaluationReason: String, Codable, Sendable {
 
 public struct Evaluation: Codable, Sendable {
     public var type: EvaluationType
-    public var featureKey: FeatureKey
+    public var featureKey: FeatureKey?
     public var reason: EvaluationReason
 
     public var bucketKey: String?
@@ -38,17 +39,21 @@ public struct Evaluation: Codable, Sendable {
     public var forceIndex: Int?
     public var force: Force?
     public var required: [RequiredValue]?
+    public var requiredFeatures: [RequiredFeature]?
     public var traffic: Traffic?
     public var variation: Variation?
     public var variationValue: VariationValue?
     public var variableKey: VariableKey?
     public var variableValue: VariableValue?
     public var variableSchema: ResolvedVariableSchema?
+    public var globalVariable: GlobalVariable?
     public var variableOverrideIndex: Int?
+    public var variableOverrideKey: String?
+    public var variableOverridePath: [String]?
     public var sticky: EvaluatedFeature?
     public var error: String?
 
-    public init(type: EvaluationType, featureKey: FeatureKey, reason: EvaluationReason) {
+    public init(type: EvaluationType, featureKey: FeatureKey? = nil, reason: EvaluationReason) {
         self.type = type
         self.featureKey = featureKey
         self.reason = reason
@@ -58,7 +63,8 @@ public struct Evaluation: Codable, Sendable {
 public struct OverrideOptions: Sendable {
     // Instance-internal transport for child sticky state. Sticky values are
     // configured on an instance, never supplied for an individual evaluation.
-    var sticky: StickyFeatures?
+    var stickyFeatures: StickyFeatures?
+    var stickyVariables: StickyVariables?
     public var defaultVariationValue: VariationValue?
     public var defaultVariableValue: VariableValue?
 
@@ -66,16 +72,19 @@ public struct OverrideOptions: Sendable {
         defaultVariationValue: VariationValue? = nil,
         defaultVariableValue: VariableValue? = nil
     ) {
-        self.sticky = nil
+        self.stickyFeatures = nil
+        self.stickyVariables = nil
         self.defaultVariationValue = defaultVariationValue
         self.defaultVariableValue = defaultVariableValue
     }
 }
 
 public struct SpawnOptions: Sendable {
-    public var sticky: StickyFeatures?
+    public var stickyFeatures: StickyFeatures?
+    public var stickyVariables: StickyVariables?
 
-    public init(sticky: StickyFeatures? = nil) {
-        self.sticky = sticky
+    public init(stickyFeatures: StickyFeatures? = nil, stickyVariables: StickyVariables? = nil) {
+        self.stickyFeatures = stickyFeatures
+        self.stickyVariables = stickyVariables
     }
 }

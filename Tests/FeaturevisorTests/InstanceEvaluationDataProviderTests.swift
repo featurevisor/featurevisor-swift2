@@ -62,7 +62,7 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
     func testSharedV3ConformanceFixture() throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: "conformance/sdk-v3.json"))
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(fixture["version"] as? Int, 2)
+        XCTAssertEqual(fixture["version"] as? Int, 6)
 
         let bucketing = fixture["bucketing"] as! [String: Any]
         let expected = bucketing["allocationExpectations"] as! [String: String]
@@ -138,7 +138,7 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
         let datafileData = try JSONSerialization.data(withJSONObject: aggregateCase["datafile"]!)
         let datafile = try JSONDecoder().decode(DatafileContent.self, from: datafileData)
         let featurevisor = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
-        let evaluated = featurevisor.getAllEvaluations(
+        let evaluated = featurevisor.getFeatureEvaluations(
             [:],
             [],
             OverrideOptions(
@@ -148,6 +148,81 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
         let expectedDefault = aggregateCase["expected"] as! [String: Any]
         XCTAssertEqual(evaluated?.enabled, expectedDefault["enabled"] as? Bool)
         XCTAssertEqual(evaluated?.variation, expectedDefault["variation"] as? String)
+
+        let globals = fixture["globalVariables"] as! [String: Any]
+        let globalsData = try JSONSerialization.data(withJSONObject: globals["datafile"]!)
+        let globalDatafile = try JSONDecoder().decode(DatafileContent.self, from: globalsData)
+        for testCase in globals["cases"] as! [[String: Any]] {
+            let stickyData = try JSONSerialization.data(withJSONObject: testCase["stickyVariables"] ?? [:])
+            let sticky = try JSONDecoder().decode(StickyVariables.self, from: stickyData)
+            let sdk = createFeaturevisor(FeaturevisorOptions(datafile: globalDatafile, stickyVariables: sticky))
+            let contextData = try JSONSerialization.data(withJSONObject: testCase["context"] ?? [:])
+            let context = try JSONDecoder().decode(Context.self, from: contextData)
+            let defaultValue = try testCase["defaultVariableValue"].map {
+                try JSONDecoder().decode([AnyValue].self, from: JSONSerialization.data(withJSONObject: [$0]))[0]
+            }
+            let evaluation = sdk.evaluateVariable(testCase["key"] as! String, context: context, options: OverrideOptions(defaultVariableValue: defaultValue))
+            let actual = evaluation.variableValue ?? defaultValue
+            let expectedValue = try testCase["expectedValue"].map {
+                try JSONDecoder().decode([AnyValue].self, from: JSONSerialization.data(withJSONObject: [$0]))[0]
+            }
+            XCTAssertEqual(actual, expectedValue, testCase["name"] as! String)
+            XCTAssertEqual(evaluation.reason.rawValue, testCase["expectedReason"] as? String, testCase["name"] as! String)
+            XCTAssertEqual(evaluation.variableOverrideIndex, testCase["expectedOverrideIndex"] as? Int)
+            XCTAssertEqual(evaluation.variableOverrideKey, testCase["expectedOverrideKey"] as? String)
+            XCTAssertEqual(evaluation.variableOverridePath, testCase["expectedOverridePath"] as? [String])
+        }
+
+        let required = fixture["requiredFeatures"] as! [String: Any]
+        let requiredData = try JSONSerialization.data(withJSONObject: required["datafile"]!)
+        let requiredDatafile = try JSONDecoder().decode(DatafileContent.self, from: requiredData)
+        let requiredSDK = createFeaturevisor(FeaturevisorOptions(datafile: requiredDatafile))
+        for testCase in required["cases"] as! [[String: Any]] {
+            XCTAssertEqual(requiredSDK.isEnabled(testCase["feature"] as! String), testCase["expectedEnabled"] as? Bool, testCase["name"] as! String)
+        }
+        let featureVariable = required["featureVariableCase"] as! [String: Any]
+        let featureEvaluation = requiredSDK.evaluateVariable(featureVariable["feature"] as! String, featureVariable["variable"] as! String)
+        XCTAssertEqual(featureEvaluation.variableValue?.asString(), featureVariable["expectedValue"] as? String)
+        XCTAssertEqual(featureEvaluation.variableOverrideKey, featureVariable["expectedOverrideKey"] as? String)
+
+        let dependencyCase = globals["dependencyUpdateCase"] as! [String: Any]
+        let initial = try JSONDecoder().decode(
+            DatafileContent.self,
+            from: JSONSerialization.data(withJSONObject: dependencyCase["initial"]!)
+        )
+        let expectedFeatures = dependencyCase["expectedChangedFeatures"] as! [String]
+        let expectedVariables = dependencyCase["expectedChangedVariables"] as! [String]
+        for mode in dependencyCase["modes"] as! [[String: Any]] {
+            let sdk = createFeaturevisor(FeaturevisorOptions(datafile: initial))
+            let event = ConcurrencyBox<EventPayload?>(nil)
+            let unsubscribe = sdk.on(.datafileSet) { event.value = $0 }
+            let updated = try JSONDecoder().decode(
+                DatafileContent.self,
+                from: JSONSerialization.data(withJSONObject: dependencyCase["updated"]!)
+            )
+            sdk.setDatafile(updated, replace: mode["replace"] as! Bool)
+            XCTAssertEqual(event.value?.params["features"]?.asArray()?.compactMap { $0.asString() }.sorted(), expectedFeatures)
+            XCTAssertEqual(event.value?.params["variables"]?.asArray()?.compactMap { $0.asString() }.sorted(), expectedVariables)
+            unsubscribe()
+        }
+
+        let removalSDK = createFeaturevisor(FeaturevisorOptions(datafile: initial))
+        let removalEvent = ConcurrencyBox<EventPayload?>(nil)
+        let unsubscribe = removalSDK.on(.datafileSet) { removalEvent.value = $0 }
+        let withoutSegment = try JSONDecoder().decode(
+            DatafileContent.self,
+            from: JSONSerialization.data(withJSONObject: dependencyCase["withoutSegment"]!)
+        )
+        removalSDK.setDatafile(withoutSegment, replace: true)
+        XCTAssertEqual(
+            removalEvent.value?.params["features"]?.asArray()?.compactMap { $0.asString() }.sorted(),
+            dependencyCase["expectedRemovedSegmentFeatures"] as? [String]
+        )
+        XCTAssertEqual(
+            removalEvent.value?.params["variables"]?.asArray()?.compactMap { $0.asString() }.sorted(),
+            dependencyCase["expectedRemovedSegmentVariables"] as? [String]
+        )
+        unsubscribe()
     }
 
     func testGetters() {
