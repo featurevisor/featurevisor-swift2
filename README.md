@@ -387,7 +387,7 @@ loadDatafile(target: "checkout")
 
 ### Updating datafile
 
-You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile_set) event that you can listen and react to accordingly.
+You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile-set) event that you can listen and react to accordingly.
 
 ### Interval-based update
 
@@ -511,6 +511,8 @@ Modules allow you to intercept evaluation inputs and outputs.
 
 For feature evaluations, all `before` callbacks run in registration order, followed by all `beforeEvaluation` callbacks. After evaluation and caller defaults, all `afterEvaluation` callbacks run, followed by all `after` callbacks. Global variable evaluations use only `beforeEvaluation` and `afterEvaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved.
 
+`before` and `after` remain available as deprecated feature-only compatibility callbacks. Use `beforeEvaluation` and `afterEvaluation` for new modules so the same callbacks can handle feature and global variable evaluations.
+
 ### Defining a module
 
 ```swift
@@ -525,20 +527,16 @@ let module = FeaturevisorModule(
             )
         )
     },
-    before: { options in
+    beforeEvaluation: { options in
         var updated = options
         updated.dependencies.context["someAdditionalAttribute"] = .string("value")
         return updated
     },
-    beforeEvaluation: { options in options },
     bucketKey: { options in
         options.bucketKey
     },
     bucketValue: { options in
         options.bucketValue
-    },
-    after: { evaluation, _ in
-        evaluation
     },
     afterEvaluation: { evaluation, _ in evaluation },
     close: {
@@ -590,7 +588,7 @@ f.close()
 
 The package also ships an executable named `featurevisor`.
 
-All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behavior is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
+All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behaviour is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
 
 ### Test
 
