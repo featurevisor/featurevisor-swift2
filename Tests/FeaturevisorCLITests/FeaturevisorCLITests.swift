@@ -52,7 +52,7 @@ final class FeaturevisorCLITests: XCTestCase {
         )
     }
 
-    func testTargetAssertionFallsBackToBaseDatafile() {
+    func testTargetAssertionDoesNotFallBackToBaseDatafile() {
         let command = TestCommand()
         let cache = [
             "production": DatafileContent(schemaVersion: "2", revision: "base", segments: [:], features: [:]),
@@ -63,7 +63,7 @@ final class FeaturevisorCLITests: XCTestCase {
                 ["environment": "production", "target": "checkout"],
                 datafileCache: cache
             ),
-            "production"
+            "production-target-checkout"
         )
     }
 
