@@ -60,7 +60,7 @@ This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 proje
 In your Swift application, add this package using Swift Package Manager:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.0.0")
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.1.0")
 ```
 
 Then add the product dependency:
@@ -624,7 +624,7 @@ swift run featurevisor assess-distribution \
 The package exposes `FeaturevisorOpenFeature` as a separate library product. Targets using it should declare both package dependencies:
 
 ```swift
-.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.0.0"),
+.package(url: "https://github.com/featurevisor/featurevisor-swift2.git", from: "3.1.0"),
 .package(url: "https://github.com/open-feature/swift-sdk.git", from: "0.5.0")
 ```
 
@@ -733,7 +733,7 @@ To verify the public products from clean consumer packages:
 ./scripts/verify-consumers.sh
 ```
 
-Release tags use semantic versions such as `v3.0.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
+Release tags use semantic versions such as `v3.1.0`. The release validation workflow tests both public library targets and clean consumers for every release tag.
 
 ## License
 
