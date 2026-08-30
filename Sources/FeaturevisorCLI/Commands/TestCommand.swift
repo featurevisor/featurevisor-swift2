@@ -113,20 +113,41 @@ struct TestCommand {
                 reports.append(AssertionReport(description: description, passed: false, messages: ["=> datafile not found for assertion"]))
                 continue
             }
-            let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
-            if let sticky = CLIHelpers.anyToStickyVariables(assertion["stickyVariables"]) { sdk.setStickyVariables(sticky, replace: true) }
-            let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
-            let defaultValue = assertion["defaultVariableValue"].map(CLIHelpers.anyToAnyValue)
-            let evaluation = sdk.evaluateVariable(variableKey, context: context, options: OverrideOptions(defaultVariableValue: defaultValue))
-            var messages: [String] = []
-            if let expected = assertion["expectedValue"], !CLIHelpers.compareExpected(evaluation.variableValue ?? defaultValue, expected: expected) {
-                messages.append(formatMismatch(type: "variable", expected: expected, actual: (evaluation.variableValue ?? defaultValue)?.rawValue, variableKey: variableKey))
+            if options.showDatafile, let text = try? datafile.toJSON(pretty: true) {
+                print("")
+                print(text)
+                print("")
             }
-            if let expectedEvaluation = assertion["expectedEvaluation"] as? [String: Any] {
-                for (field, expected) in expectedEvaluation where !CLIHelpers.compareAnyExpected(CLIHelpers.evaluationFieldValue(evaluation, key: field), expected: expected) {
-                    messages.append(formatMismatch(type: "evaluation", expected: expected, actual: CLIHelpers.evaluationFieldValue(evaluation, key: field), variableKey: variableKey, evaluationType: "variable", evaluationKey: field))
+            let sdk = sdkForAssertion(datafile: datafile, assertion: assertion, options: options)
+            let context = CLIHelpers.parseContext(assertion["context"] as? [String: Any])
+            sdk.setContext(context)
+            var messages: [String] = []
+            evaluateGlobalVariableExpectation(
+                variableKey: variableKey,
+                assertion: assertion,
+                evaluation: sdk.evaluateVariable(variableKey, options: variableOverrideOptions(assertion)),
+                messages: &messages
+            )
+            if let children = assertion["children"] as? [[String: Any]] {
+                for (childIndex, childAssertion) in children.enumerated() {
+                    let child = sdk.spawn(
+                        CLIHelpers.parseContext(childAssertion["context"] as? [String: Any]),
+                        options: SpawnOptions(
+                            stickyFeatures: CLIHelpers.anyToSticky(childAssertion["stickyFeatures"]) ?? [:],
+                            stickyVariables: CLIHelpers.anyToStickyVariables(childAssertion["stickyVariables"]) ?? [:]
+                        )
+                    )
+                    evaluateGlobalVariableExpectation(
+                        variableKey: variableKey,
+                        assertion: childAssertion,
+                        evaluation: child.evaluateVariable(variableKey, options: variableOverrideOptions(childAssertion)),
+                        childIndex: childIndex,
+                        messages: &messages
+                    )
+                    child.close()
                 }
             }
+            sdk.close()
             if messages.isEmpty { passed += 1 } else { failed += 1 }
             reports.append(AssertionReport(description: description, passed: messages.isEmpty, messages: messages))
         }
@@ -174,10 +195,7 @@ struct TestCommand {
         let env = assertion["environment"] as? String
         let target = assertion["target"] as? String
         if let target {
-            let targetKey = targetDatafileCacheKey(env, target)
-            if datafileCache[targetKey] != nil {
-                return targetKey
-            }
+            return targetDatafileCacheKey(env, target)
         }
         return datafileCacheKey(env)
     }
@@ -221,7 +239,8 @@ struct TestCommand {
     }
 
     private func sdkForAssertion(datafile: DatafileContent, assertion: [String: Any], options: CLIOptions) -> Featurevisor {
-        let sticky = CLIHelpers.anyToSticky(assertion["sticky"])
+        let sticky = CLIHelpers.anyToSticky(assertion["stickyFeatures"] ?? assertion["sticky"])
+        let stickyVariables = CLIHelpers.anyToStickyVariables(assertion["stickyVariables"])
         let forcedAt = CLIHelpers.doubleValue(assertion["at"])
         let module = FeaturevisorModule(name: "test-module", bucketValue: { options in
             if let at = forcedAt {
@@ -235,6 +254,7 @@ struct TestCommand {
                 datafile: datafile,
                 logLevel: CLIHelpers.logLevel(options),
                 stickyFeatures: sticky,
+                stickyVariables: stickyVariables,
                 modules: [module]
             )
         )
@@ -264,10 +284,9 @@ struct TestCommand {
 
         for assertion in assertions {
             let description = (assertion["description"] as? String) ?? "assertion"
-            let env = assertion["environment"] as? String
             let cacheKey = datafileCacheKeyForAssertion(assertion, datafileCache: datafileCache)
 
-            guard let datafile = datafileCache[cacheKey] ?? datafileCache[datafileCacheKey(env)] else {
+            guard let datafile = datafileCache[cacheKey] else {
                 failed += 1
                 reports.append(AssertionReport(description: description, passed: false, messages: ["=> datafile not found for assertion"]))
                 continue
@@ -376,7 +395,12 @@ struct TestCommand {
                     }
                     let childContext = CLIHelpers.parseContext(childContextMap)
                     let childSticky = CLIHelpers.anyToSticky(assertion["sticky"])
-                    let child = sdk.spawn(childContext, options: SpawnOptions(stickyFeatures: childSticky))
+                    let child = sdk.spawn(
+                        childContext,
+                        options: SpawnOptions(
+                            stickyFeatures: childSticky
+                        )
+                    )
 
                     if let expectedEnabled = childAssertion["expectedToBeEnabled"] as? Bool,
                        child.isEnabled(featureKey) != expectedEnabled {
@@ -447,9 +471,12 @@ struct TestCommand {
                             }
                         }
                     }
+                    child.close()
                     childIndex += 1
                 }
             }
+
+            sdk.close()
 
             if assertionFailed {
                 failed += 1
@@ -579,6 +606,46 @@ struct TestCommand {
         }
 
         return "=> \(section): expected \"\(display(expected))\", received \"\(display(actual))\""
+    }
+
+    private func variableOverrideOptions(_ assertion: [String: Any]) -> OverrideOptions {
+        OverrideOptions(defaultVariableValue: assertion["defaultVariableValue"].map(CLIHelpers.anyToAnyValue))
+    }
+
+    private func evaluateGlobalVariableExpectation(
+        variableKey: String,
+        assertion: [String: Any],
+        evaluation: Evaluation,
+        childIndex: Int? = nil,
+        messages: inout [String]
+    ) {
+        if let expected = assertion["expectedValue"],
+           !CLIHelpers.compareExpected(evaluation.variableValue, expected: expected) {
+            messages.append(formatGlobalVariableMismatch(
+                section: "expectedValue",
+                expected: expected,
+                actual: evaluation.variableValue?.rawValue,
+                childIndex: childIndex
+            ))
+        }
+        if let expectedEvaluation = assertion["expectedEvaluation"] as? [String: Any] {
+            for (field, expected) in expectedEvaluation {
+                let actual = CLIHelpers.evaluationFieldValue(evaluation, key: field)
+                if !CLIHelpers.compareAnyExpected(actual, expected: expected) {
+                    messages.append(formatGlobalVariableMismatch(
+                        section: "expectedEvaluation.\(field)",
+                        expected: expected,
+                        actual: actual,
+                        childIndex: childIndex
+                    ))
+                }
+            }
+        }
+    }
+
+    private func formatGlobalVariableMismatch(section: String, expected: Any?, actual: Any?, childIndex: Int?) -> String {
+        let prefix = childIndex.map { "children[\($0)]." } ?? ""
+        return "=> \(prefix)\(section): expected \(display(expected)), received \(display(actual))"
     }
 
     private func display(_ value: Any?) -> String {
