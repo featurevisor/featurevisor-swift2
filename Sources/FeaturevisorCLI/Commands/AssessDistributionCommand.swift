@@ -19,36 +19,33 @@ struct AssessDistributionCommand {
     }
 
     func run(_ options: CLIOptions) -> Int32 {
-        guard !options.environment.isEmpty else {
-            print("Environment is required")
+        guard options.n > 0 else {
+            fputs("Iterations must be a positive integer\n", stderr)
             return 1
         }
         guard !options.feature.isEmpty else {
-            print("Feature is required")
+            fputs("Feature is required\n", stderr)
             return 1
         }
 
-        if options.targets.count > 1 {
-            for target in options.targets {
-                var selected = options
-                selected.targets = [target]
-                if run(selected) != 0 { return 1 }
-            }
-            return 0
-        }
+        return CLIHelpers.runRuntimeSelections(options) { runSelected($0) }
+    }
 
+    private func runSelected(_ options: CLIOptions) -> Int32 {
         let target = options.targets.first
 
         guard let datafile = CLIHelpers.buildDatafileJSON(
             projectDirectoryPath: options.projectDirectoryPath,
             environment: options.environment,
             inflate: options.inflate,
-            target: target
+            target: target,
+            set: options.set
         ) else {
             return 1
         }
 
         let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: CLIHelpers.logLevel(options)))
+        defer { sdk.close() }
         let baseContext = CLIHelpers.parseContext(options.context)
 
         var flagCounts: [String: Int] = ["enabled": 0, "disabled": 0]
@@ -56,7 +53,8 @@ struct AssessDistributionCommand {
 
         print("\nAssess Featurevisor distribution")
         print("  Feature: \(options.feature)")
-        print("  Environment: \(options.environment)")
+        print("  Environment: \(options.environment.isEmpty ? "none" : options.environment)")
+        if !options.set.isEmpty { print("  Set: \(options.set)") }
         if let target { print("  Target: \(target)") }
         print("  Iterations: \(options.n)")
         print("Against context: \(options.context.isEmpty ? "{}" : options.context)")

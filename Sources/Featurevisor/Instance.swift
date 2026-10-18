@@ -44,11 +44,13 @@ public final class Featurevisor: @unchecked Sendable {
     private let onDiagnostic: FeaturevisorDiagnosticHandler?
     private var stickyFeatures: StickyFeatures?
     private var stickyVariables: StickyVariables?
+    private var stateGeneration: UInt64 = 0
 
     private var datafile: DatafileContent
     private var evaluationData: InstanceEvaluationDataProvider
     private var modulesManager: ModulesManager!
     private var moduleDiagnosticSubscriptions: [ModuleDiagnosticSubscription] = []
+    private let diagnosticAudience: EvaluationDiagnosticAudience
     private let emitter: Emitter
     private var closed = false
 
@@ -58,6 +60,7 @@ public final class Featurevisor: @unchecked Sendable {
         self.onDiagnostic = options.onDiagnostic
         self.stickyFeatures = options.stickyFeatures
         self.stickyVariables = options.stickyVariables
+        self.diagnosticAudience = EvaluationDiagnosticAudience(logLevel: options.logLevel)
         self.emitter = Emitter()
         self.datafile = emptyDatafile
         self.evaluationData = InstanceEvaluationDataProvider(datafile: emptyDatafile, reportDiagnostic: { _ in })
@@ -93,15 +96,23 @@ public final class Featurevisor: @unchecked Sendable {
 
     public func setLogLevel(_ level: LogLevel) {
         lock.withLock { logLevel = level }
+        diagnosticAudience.setLogLevel(level)
     }
 
-    public func setDatafile(_ datafile: DatafileContent, replace: Bool = false) {
+    /// Returns true for accepted datafiles, including unchanged content, or false when closed.
+    @discardableResult
+    public func setDatafile(_ datafile: DatafileContent, replace: Bool = false) -> Bool {
+        guard !lock.withLock({ closed }) else { return false }
+        let (datafile, normalizationErrors) = normalizeLegacyDatafile(datafile)
         let result = lock.withLock { () -> [String: AnyValue]? in
             guard !closed else { return nil }
             let storedDatafile = replace ? datafile : mergeStoredDatafile(existing: self.datafile, incoming: datafile)
             let newInstanceEvaluationDataProvider = InstanceEvaluationDataProvider(
                 datafile: storedDatafile,
-                reportDiagnostic: { [weak self] diagnostic in self?.reportDiagnostic(diagnostic) }
+                reportDiagnostic: { [weak self] diagnostic in self?.reportDiagnostic(diagnostic) },
+                previous: evaluationData,
+                incoming: datafile,
+                replace: replace
             )
             let details = getParamsForDatafileSetEvent(
                 previousInstanceEvaluationDataProvider: evaluationData,
@@ -110,17 +121,23 @@ public final class Featurevisor: @unchecked Sendable {
             )
             self.datafile = storedDatafile
             self.evaluationData = newInstanceEvaluationDataProvider
+            stateGeneration &+= 1
             return details
         }
-        guard let details = result else { return }
+        guard let details = result else { return false }
+        for diagnostic in normalizationErrors { reportDiagnostic(diagnostic) }
 
         reportDiagnostic(FeaturevisorDiagnostic(level: .info, code: "datafile_set", message: "Datafile set", details: details))
         emitter.trigger(.datafileSet, payload: EventPayload(details))
+        return true
     }
 
-    public func setDatafile(json: String, replace: Bool = false) {
+    /// Returns false for rejected JSON or when closed, retaining the last accepted datafile.
+    @discardableResult
+    public func setDatafile(json: String, replace: Bool = false) -> Bool {
+        guard lock.withLock({ !closed }) else { return false }
         do {
-            setDatafile(try DatafileContent.fromJSON(json), replace: replace)
+            return setDatafile(try DatafileContent.fromJSON(json), replace: replace)
         } catch {
             reportDiagnostic(FeaturevisorDiagnostic(
                 level: .error,
@@ -128,6 +145,7 @@ public final class Featurevisor: @unchecked Sendable {
                 message: "Could not parse datafile",
                 originalError: error.localizedDescription
             ))
+            return false
         }
     }
 
@@ -136,6 +154,7 @@ public final class Featurevisor: @unchecked Sendable {
             guard !closed else { return nil }
             let previous = self.stickyFeatures ?? [:]
             self.stickyFeatures = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return (previous, self.stickyFeatures ?? [:])
         }
         guard let (previousSticky, newSticky) = values else { return }
@@ -149,6 +168,7 @@ public final class Featurevisor: @unchecked Sendable {
             guard !closed else { return nil }
             let previous = self.stickyVariables ?? [:]
             self.stickyVariables = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return (previous, self.stickyVariables ?? [:])
         }
         guard let values else { return }
@@ -194,6 +214,8 @@ public final class Featurevisor: @unchecked Sendable {
             return true
         }
         guard shouldClose else { return }
+        diagnosticAudience.removeAllSubscriptions()
+        reader().closeEntityCache()
         modulesManager.closeAll()
         emitter.clearAll()
     }
@@ -250,12 +272,14 @@ public final class Featurevisor: @unchecked Sendable {
                     return true
                 }
                 guard added else { return {} }
+                self.diagnosticAudience.addSubscription(id: subscription.id, logLevel: subscription.logLevel)
 
                 return { [weak self] in
                     guard let self else { return }
                     self.lock.withLock {
                         self.moduleDiagnosticSubscriptions.removeAll(where: { $0.id == subscription.id })
                     }
+                    self.diagnosticAudience.removeSubscription(id: subscription.id)
                 }
             },
             reportDiagnostic: { [weak self] diagnostic in
@@ -269,13 +293,19 @@ public final class Featurevisor: @unchecked Sendable {
     }
 
     private func clearModuleDiagnosticSubscriptions(_ module: FeaturevisorModule) {
-        lock.withLock { moduleDiagnosticSubscriptions.removeAll(where: { $0.moduleID == module.id }) }
+        let removed = lock.withLock { () -> [UUID] in
+            let removed = moduleDiagnosticSubscriptions.filter { $0.moduleID == module.id }.map(\.id)
+            moduleDiagnosticSubscriptions.removeAll(where: { $0.moduleID == module.id })
+            return removed
+        }
+        for id in removed { diagnosticAudience.removeSubscription(id: id) }
     }
 
     public func setContext(_ context: Context, replace: Bool = false) {
         let newContext = lock.withLock { () -> Context? in
             guard !closed else { return nil }
             self.context = replace ? context : self.context.merging(context, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return self.context
         }
         guard let newContext else { return }
@@ -305,26 +335,37 @@ public final class Featurevisor: @unchecked Sendable {
         FeaturevisorChildInstance(parent: self, context: getContext(context), stickyFeatures: options.stickyFeatures, stickyVariables: options.stickyVariables)
     }
 
+    func stickyState() -> StickyStateSnapshot {
+        lock.withLock { StickyStateSnapshot(features: stickyFeatures, variables: stickyVariables, generation: String(stateGeneration), evaluationData: evaluationData) }
+    }
+
     private func dependencies(_ context: Context, options: OverrideOptions = OverrideOptions()) -> EvaluateDependencies {
         let snapshot = lock.withLock {
-            (
+            return (
                 self.context.merging(context, uniquingKeysWith: { _, new in new }),
                 evaluationData,
                 options.stickyFeatures ?? stickyFeatures,
                 options.stickyVariables ?? stickyVariables
             )
         }
+        let source = options.stickySource ?? StickySourceHandle { [weak self] in
+            self?.stickyState() ?? StickyStateSnapshot(features: nil, variables: nil, generation: "closed")
+        }
         return EvaluateDependencies(
             context: snapshot.0,
             reportDiagnostic: { [weak self] diagnostic in
                 self?.reportDiagnostic(diagnostic)
             },
+            diagnosticAudience: diagnosticAudience,
             modulesManager: modulesManager,
             evaluationData: snapshot.1,
             stickyFeatures: snapshot.2,
             stickyVariables: snapshot.3,
             defaultVariationValue: options.defaultVariationValue,
-            defaultVariableValue: options.defaultVariableValue
+            defaultVariableValue: options.defaultVariableValue,
+            stickySource: source,
+            inheritedStickyFeatures: options.stickySource != nil || options.stickyFeatures == nil,
+            inheritedStickyVariables: options.stickySource != nil || options.stickyVariables == nil
         )
     }
 
@@ -354,9 +395,22 @@ public final class Featurevisor: @unchecked Sendable {
 
     public func getVariable(_ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> VariableValue? {
         let evaluation = evaluateVariable(variableKey, context: context, options: options)
-        let value = evaluation.variableValue ?? options.defaultVariableValue
-        if evaluation.globalVariable?.type == "json", case .string(let json)? = value,
-           let data = json.data(using: .utf8), let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) { return parsed }
+        let value = evaluation.reason == .conditionsUnmet && evaluation.globalVariable?.compose != nil
+            ? evaluation.variableValue : evaluation.variableValue ?? options.defaultVariableValue
+        if evaluation.globalVariable?.compose == nil, evaluation.globalVariable?.type == "json", case .string(let json)? = value {
+            do {
+                return try JSONDecoder().decode(AnyValue.self, from: Data(json.utf8))
+            } catch {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .error,
+                    code: "evaluation_error",
+                    message: "getVariable failed",
+                    originalError: error.localizedDescription,
+                    details: ["variableKey": .string(variableKey)]
+                ))
+                return nil
+            }
+        }
         return value
     }
 
@@ -370,11 +424,22 @@ public final class Featurevisor: @unchecked Sendable {
 
     public func getVariable(_ featureKey: FeatureKey, _ variableKey: VariableKey, _ context: Context = [:], _ options: OverrideOptions = OverrideOptions()) -> VariableValue? {
         let evaluation = evaluateVariable(featureKey, variableKey, context: context, options: options)
-        if evaluation.variableSchema?.type == "json",
-           case .string(let jsonString)? = evaluation.variableValue,
-           let data = jsonString.data(using: .utf8),
-           let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) {
-            return parsed
+        if evaluation.variableSchema?.type == "json", case .string(let jsonString)? = evaluation.variableValue {
+            do {
+                return try JSONDecoder().decode(AnyValue.self, from: Data(jsonString.utf8))
+            } catch {
+                reportDiagnostic(FeaturevisorDiagnostic(
+                    level: .error,
+                    code: "evaluation_error",
+                    message: "getVariable failed",
+                    originalError: error.localizedDescription,
+                    details: [
+                        "featureKey": .string(featureKey),
+                        "variableKey": .string(variableKey),
+                    ]
+                ))
+                return nil
+            }
         }
         return evaluation.variableValue
     }

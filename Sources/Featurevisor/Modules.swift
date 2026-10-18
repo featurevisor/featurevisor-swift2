@@ -57,33 +57,27 @@ public struct FeaturevisorModule: Sendable {
 
     public var name: String?
     public var setup: (@Sendable (FeaturevisorModuleApi) -> Void)?
-    public var before: (@Sendable (EvaluateOptions) -> EvaluateOptions)?
     public var beforeEvaluation: (@Sendable (EvaluateOptions) -> EvaluateOptions)?
     public var bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)?
     public var bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)?
-    public var after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)?
     public var afterEvaluation: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)?
     public var close: (@Sendable () throws -> Void)?
 
     public init(
         name: String? = nil,
         setup: (@Sendable (FeaturevisorModuleApi) -> Void)? = nil,
-        before: (@Sendable (EvaluateOptions) -> EvaluateOptions)? = nil,
         beforeEvaluation: (@Sendable (EvaluateOptions) -> EvaluateOptions)? = nil,
         bucketKey: (@Sendable (ConfigureBucketKeyOptions) -> String)? = nil,
         bucketValue: (@Sendable (ConfigureBucketValueOptions) -> Int)? = nil,
-        after: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)? = nil,
         afterEvaluation: (@Sendable (Evaluation, EvaluateOptions) -> Evaluation)? = nil,
         close: (@Sendable () throws -> Void)? = nil
     ) {
         self.id = UUID()
         self.name = name
         self.setup = setup
-        self.before = before
         self.beforeEvaluation = beforeEvaluation
         self.bucketKey = bucketKey
         self.bucketValue = bucketValue
-        self.after = after
         self.afterEvaluation = afterEvaluation
         self.close = close
     }
@@ -91,6 +85,7 @@ public struct FeaturevisorModule: Sendable {
 
 final class ModulesManager: @unchecked Sendable {
     private var modules: [FeaturevisorModule] = []
+    private var revision: UInt64 = 0
     private let lock = FeaturevisorLock()
     private var closed = false
     private let reportDiagnostic: @Sendable (FeaturevisorDiagnostic, FeaturevisorModule?) -> Void
@@ -118,6 +113,7 @@ final class ModulesManager: @unchecked Sendable {
             guard !closed else { return (false, false) }
             if let name = module.name, modules.contains(where: { $0.name == name }) { return (false, true) }
             modules.append(module)
+            revision &+= 1
             return (true, false)
         }
         if result.duplicate {
@@ -141,6 +137,7 @@ final class ModulesManager: @unchecked Sendable {
             let existed = self.lock.withLock {
                 let existed = self.modules.contains(where: { $0.id == module.id })
                 self.modules.removeAll(where: { $0.id == module.id })
+                if existed { self.revision &+= 1 }
                 return existed
             }
             self.clearModuleDiagnosticSubscriptions(module)
@@ -154,6 +151,7 @@ final class ModulesManager: @unchecked Sendable {
         let removed = lock.withLock {
             let removed = modules.filter { $0.name == name }
             modules.removeAll(where: { $0.name == name })
+            if !removed.isEmpty { revision &+= 1 }
             return removed
         }
         for module in removed {
@@ -166,11 +164,14 @@ final class ModulesManager: @unchecked Sendable {
         lock.withLock { modules }
     }
 
+    func getRevision() -> UInt64 { lock.withLock { revision } }
+
     public func closeAll() {
         let existing = lock.withLock {
             closed = true
             let existing = modules
             modules = []
+            if !existing.isEmpty { revision &+= 1 }
             return existing
         }
 

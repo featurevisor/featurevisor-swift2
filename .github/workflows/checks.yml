@@ -82,10 +82,10 @@ jobs:
           xcrun --sdk macosx --show-sdk-version
 
       - name: Build core SDK for iOS
-        run: swift build --target Featurevisor --triple arm64-apple-ios14.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-core
+        run: swift build --target Featurevisor --triple arm64-apple-ios15.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-core
 
       - name: Build OpenFeature provider for iOS
-        run: swift build --target FeaturevisorOpenFeature --triple arm64-apple-ios14.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-openfeature
+        run: swift build --target FeaturevisorOpenFeature --triple arm64-apple-ios15.0-simulator --sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" --scratch-path /tmp/featurevisor-ios-openfeature
 
       - name: Verify clean package consumers
         run: ./scripts/verify-consumers.sh
@@ -100,7 +100,7 @@ jobs:
         run: |
           mkdir example-1
           cd example-1
-          npx --yes @featurevisor/cli@3 init --example=1
+          npx --yes @featurevisor/cli@latest init --example=1
           npm install
           npx featurevisor build
           npx featurevisor test --onlyFailures

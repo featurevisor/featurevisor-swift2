@@ -1,12 +1,23 @@
 name: Release validation
 
+# Prefer the manual run: it validates the selected commit first and only then
+# creates the tag that Swift Package Manager resolves. Tags pushed by hand are
+# still validated afterwards.
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create after validation, such as v4.0.0"
+        required: true
   push:
     tags:
       - "v*"
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   validate:
@@ -24,16 +35,7 @@ jobs:
 
       - name: Validate semantic version tag
         shell: bash
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Expected a semantic version tag such as v3.1.0"
-            exit 1
-          fi
-          version="${GITHUB_REF_NAME#v}"
-          if ! grep -Fq "from: \"$version\"" README.md; then
-            echo "README installation version does not match $GITHUB_REF_NAME"
-            exit 1
-          fi
+        run: bash scripts/verify-release.sh "$RELEASE_TAG"
 
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2.4.0
@@ -56,3 +58,24 @@ jobs:
 
       - name: Verify clean package consumers
         run: ./scripts/verify-consumers.sh
+
+  tag:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Create the validated tag
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "$RELEASE_TAG already exists" >&2
+            exit 1
+          fi
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"

@@ -53,6 +53,42 @@ func shouldLogDiagnostic(currentLevel: LogLevel, diagnosticLevel: LogLevel) -> B
     diagnosticLevel.rawValue >= currentLevel.rawValue
 }
 
+final class EvaluationDiagnosticAudience: @unchecked Sendable {
+    private let lock = FeaturevisorLock()
+    private var logLevel: LogLevel
+    private var subscriptions: [UUID: LogLevel] = [:]
+
+    init(logLevel: LogLevel) {
+        self.logLevel = logLevel
+    }
+
+    func setLogLevel(_ level: LogLevel) {
+        lock.withLock { logLevel = level }
+    }
+
+    func addSubscription(id: UUID, logLevel: LogLevel) {
+        lock.withLock { subscriptions[id] = logLevel }
+    }
+
+    func removeSubscription(id: UUID) {
+        lock.withLock { subscriptions[id] = nil }
+    }
+
+    func removeAllSubscriptions() {
+        lock.withLock { subscriptions.removeAll(keepingCapacity: false) }
+    }
+
+    func shouldReport(_ level: LogLevel) -> Bool {
+        lock.withLock {
+            level == .error ||
+                shouldLogDiagnostic(currentLevel: logLevel, diagnosticLevel: level) ||
+                subscriptions.values.contains {
+                    shouldLogDiagnostic(currentLevel: $0, diagnosticLevel: level)
+                }
+        }
+    }
+}
+
 func writeDiagnosticToConsole(_ diagnostic: FeaturevisorDiagnostic) {
     let serialized = diagnostic.details.isEmpty ? "" : " \(diagnostic.details)"
     FileHandle.standardError.write(Data("[Featurevisor] \(diagnostic.message)\(serialized)\n".utf8))

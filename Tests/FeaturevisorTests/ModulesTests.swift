@@ -154,7 +154,7 @@ final class ModulesTests: XCTestCase {
 
         let module = FeaturevisorModule(
             name: "transformer",
-            before: { options in
+            beforeEvaluation: { options in
                 var updated = options
                 updated.dependencies.context["userId"] = .string("from-before")
                 return updated
@@ -166,7 +166,7 @@ final class ModulesTests: XCTestCase {
             bucketValue: { _ in
                 50_000
             },
-            after: { evaluation, _ in
+            afterEvaluation: { evaluation, _ in
                 var updated = evaluation
                 updated.reason = .forced
                 return updated
@@ -182,14 +182,12 @@ final class ModulesTests: XCTestCase {
                     key: "exp",
                     hash: nil,
                     deprecated: nil,
-                    required: nil,
                     variablesSchema: nil,
                     disabledVariationValue: nil,
                     variations: nil,
                     bucketBy: .single("userId"),
                     traffic: [Traffic(key: "all", segments: .all, percentage: 100_000, enabled: true, variation: nil, variables: nil, variationWeights: nil, variableOverrides: nil, allocation: nil)],
-                    force: nil,
-                    ranges: [[0, 10_000]]
+                    force: nil
                 ),
             ]
         )
@@ -226,24 +224,53 @@ final class ModulesTests: XCTestCase {
         })
     }
 
+    func testEvaluatorDiagnosticAudienceTracksLiveSubscriptionChanges() {
+        let observed = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
+        let unsubscribe = ConcurrencyBox<FeaturevisorUnsubscribe?>(nil)
+        let module = FeaturevisorModule(
+            name: "temporary-observer",
+            setup: { api in
+                unsubscribe.value = api.onDiagnostic({ diagnostic in
+                    guard diagnostic.code == "feature_not_found" else { return }
+                    observed.mutate { $0.append(diagnostic) }
+                    unsubscribe.value?()
+                }, options: FeaturevisorModuleDiagnosticOptions(logLevel: .debug))
+            }
+        )
+        let sdk = createFeaturevisor(FeaturevisorOptions(logLevel: .fatal, modules: [module]))
+
+        _ = sdk.isEnabled("missing")
+        _ = sdk.isEnabled("missing")
+
+        XCTAssertEqual(observed.value.count, 1)
+        let diagnostic = observed.value[0]
+        XCTAssertEqual(diagnostic.level, .warn)
+        XCTAssertEqual(diagnostic.code, "feature_not_found")
+        XCTAssertEqual(diagnostic.message, "Feature not found")
+        XCTAssertNil(diagnostic.originalError)
+        XCTAssertEqual(diagnostic.details["featureKey"], .string("missing"))
+        XCTAssertEqual(diagnostic.details["reason"], .string("feature_not_found"))
+        guard case .object(let evaluation)? = diagnostic.details["evaluation"] else {
+            return XCTFail("expected embedded evaluation metadata")
+        }
+        XCTAssertEqual(evaluation["featureKey"], .string("missing"))
+        XCTAssertEqual(evaluation["reason"], .string("feature_not_found"))
+    }
+
     func testCanonicalModulePhaseOrder() {
         let order = ConcurrencyBox<[String]>([])
         func module(_ name: String) -> FeaturevisorModule {
             FeaturevisorModule(
                 name: name,
-                before: { options in order.value.append("before:\(name)"); return options },
                 beforeEvaluation: { options in order.value.append("beforeEvaluation:\(name)"); return options },
-                after: { evaluation, _ in order.value.append("after:\(name)"); return evaluation },
                 afterEvaluation: { evaluation, _ in order.value.append("afterEvaluation:\(name)"); return evaluation }
             )
         }
         let sdk = createFeaturevisor(FeaturevisorOptions(logLevel: .fatal, modules: [module("first"), module("second")]))
         _ = sdk.evaluateFlag("missing")
         XCTAssertEqual(order.value, [
-            "before:first", "before:second",
             "beforeEvaluation:first", "beforeEvaluation:second",
             "afterEvaluation:first", "afterEvaluation:second",
-            "after:first", "after:second",
         ])
     }
 

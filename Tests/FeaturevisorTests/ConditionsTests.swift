@@ -50,6 +50,34 @@ final class ConditionsTests: XCTestCase {
         ))
     }
 
+    func testEmptyAndNotEmptyUseShallowContainerContents() {
+        let context: Context = [
+            "emptyString": .string(""),
+            "whitespace": .string(" "),
+            "emptyArray": .array([]),
+            "arrayWithNull": .array([.null]),
+            "emptyObject": .object([:]),
+            "objectWithNull": .object(["value": .null]),
+            "null": .null,
+            "number": .int(0),
+            "boolean": .bool(false),
+            "nested": .object(["items": .array([])]),
+        ]
+
+        for attribute in ["emptyString", "emptyArray", "emptyObject", "nested.items"] {
+            XCTAssertTrue(conditionIsMatched(.init(attribute: attribute, operator: "empty"), context: context), attribute)
+            XCTAssertFalse(conditionIsMatched(.init(attribute: attribute, operator: "notEmpty"), context: context), attribute)
+        }
+        for attribute in ["whitespace", "arrayWithNull", "objectWithNull"] {
+            XCTAssertFalse(conditionIsMatched(.init(attribute: attribute, operator: "empty"), context: context), attribute)
+            XCTAssertTrue(conditionIsMatched(.init(attribute: attribute, operator: "notEmpty"), context: context), attribute)
+        }
+        for attribute in ["null", "number", "boolean", "missing"] {
+            XCTAssertFalse(conditionIsMatched(.init(attribute: attribute, operator: "empty"), context: context), attribute)
+            XCTAssertFalse(conditionIsMatched(.init(attribute: attribute, operator: "notEmpty"), context: context), attribute)
+        }
+    }
+
     func testSemverComparisons() {
         let gte = Condition.predicate(.init(attribute: "version", operator: "semverGreaterThanOrEquals", value: .string("1.2.3")))
         XCTAssertTrue(allConditionsAreMatched(gte, context: ["version": .string("1.2.3")]))
@@ -92,6 +120,22 @@ final class ConditionsTests: XCTestCase {
             fractional,
             context: ["date": .string("2024-01-01T01:00:00.250+01:00")]
         ))
+    }
+
+    func testPortableStringDateFractionalPrecision() {
+        let reference = Condition.predicate(.init(attribute: "date", operator: "before", value: .string("2024-01-01T00:00:00.123Z")))
+        for digits in ["1239", "123999", "1239999", "123999999"] {
+            let context: Context = ["date": .string("2024-01-01T00:00:00.\(digits)Z")]
+            XCTAssertFalse(allConditionsAreMatched(reference, context: context), digits)
+            let later = Condition.predicate(.init(attribute: "date", operator: "before", value: .string("2024-01-01T00:00:00.124Z")))
+            XCTAssertTrue(allConditionsAreMatched(later, context: context), digits)
+        }
+        let invalid: Context = ["date": .string("2024-01-01T00:00:00.1234567890Z")]
+        XCTAssertFalse(allConditionsAreMatched(reference, context: invalid))
+        let epoch = Condition.predicate(.init(attribute: "date", operator: "before", value: .string("1970-01-01T00:00:00Z")))
+        XCTAssertTrue(allConditionsAreMatched(epoch, context: ["date": .string("1969-12-31T23:59:59.999999999Z")]))
+        let preceding = Condition.predicate(.init(attribute: "date", operator: "before", value: .string("1969-12-31T23:59:59.999Z")))
+        XCTAssertFalse(allConditionsAreMatched(preceding, context: ["date": .string("1969-12-31T23:59:59.999999999Z")]))
     }
 
     func testNotNegatesImplicitAnd() {

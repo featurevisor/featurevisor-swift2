@@ -25,7 +25,6 @@ final class FeaturevisorTests: XCTestCase {
                     key: "test",
                     hash: nil,
                     deprecated: nil,
-                    required: nil,
                     variablesSchema: nil,
                     disabledVariationValue: nil,
                     variations: nil,
@@ -43,8 +42,7 @@ final class FeaturevisorTests: XCTestCase {
                             allocation: nil
                         )
                     ],
-                    force: nil,
-                    ranges: nil
+                    force: nil
                 )
             ]
         )
@@ -63,7 +61,6 @@ final class FeaturevisorTests: XCTestCase {
                     key: "test",
                     hash: nil,
                     deprecated: nil,
-                    required: nil,
                     variablesSchema: [
                         "color": ResolvedVariableSchema(
                             deprecated: nil,
@@ -91,8 +88,7 @@ final class FeaturevisorTests: XCTestCase {
                             allocation: nil
                         )
                     ],
-                    force: nil,
-                    ranges: nil
+                    force: nil
                 )
             ]
         )

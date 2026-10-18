@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 import Featurevisor
 import FeaturevisorOpenFeature
 import OpenFeature
@@ -40,6 +41,103 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
             globalVariablePrefix: globalVariablePrefix,
             onTrack: onTrack
         )
+    }
+
+    func testLifecycleStatusAndChangeEvents() throws {
+        let provider = try provider()
+        defer { provider.close() }
+        XCTAssertEqual(provider.status, .notReady)
+        let ready = expectation(description: "ready")
+        let changes = expectation(description: "sticky configuration changes")
+        changes.expectedFulfillmentCount = 2
+        let subscription = provider.observe().sink { event in
+            if case .ready = event { ready.fulfill() }
+            if case .configurationChanged = event { changes.fulfill() }
+        }
+        _ = provider.initialize(initialContext: nil)
+        XCTAssertEqual(provider.status, .ready)
+        provider.featurevisor.setStickyFeatures([:])
+        provider.featurevisor.setStickyVariables([:])
+        wait(for: [ready, changes], timeout: 2)
+        subscription.cancel()
+
+        XCTAssertFalse(provider.featurevisor.setDatafile(json: "{"))
+        XCTAssertEqual(provider.status, .error)
+        _ = provider.onContextSet(oldContext: nil, newContext: ImmutableContext())
+        XCTAssertEqual(provider.status, .error)
+        XCTAssertTrue(provider.featurevisor.setDatafile(json: datafileJSON, replace: true))
+        XCTAssertEqual(provider.status, .ready)
+        provider.close()
+        XCTAssertFalse(provider.featurevisor.setDatafile(json: "{"))
+        XCTAssertEqual(provider.status, .ready)
+    }
+
+    func testFeaturevisorContextChangesNotifyWithoutReconciliationLoops() async throws {
+        let json = #"{"schemaVersion":"2","revision":"context","segments":{},"features":{},"variables":{"message":{"type":"string","defaultValue":"en","overrides":[{"conditions":{"attribute":"country","operator":"equals","value":"nl"},"value":"nl"}]}}}"#
+        for borrowed in [false, true] {
+            let options = FeaturevisorOptions(datafile: try DatafileContent.fromJSON(json), logLevel: .fatal)
+            let supplied = borrowed ? createFeaturevisor(options) : nil
+            let provider = FeaturevisorOpenFeatureProvider(options: options, featurevisor: supplied)
+            let f = provider.featurevisor
+            await OpenFeatureAPI.shared.setProviderAndWait(provider: provider, initialContext: ImmutableContext())
+            let events = Box<[String]>([])
+            let contextNotification = expectation(description: "Provider context notification")
+            let configurationNotifications = expectation(description: "Provider configuration notifications")
+            configurationNotifications.expectedFulfillmentCount = 4
+            let subscription = provider.observe().sink { event in
+                if case .configurationChanged = event {
+                    events.mutate { $0.append("configuration") }
+                    configurationNotifications.fulfill()
+                }
+                if case .contextChanged = event {
+                    events.mutate { $0.append("context") }
+                    contextNotification.fulfill()
+                }
+            }
+            let client = OpenFeatureAPI.shared.getClient()
+            XCTAssertEqual(client.getStringValue(key: "variable:message", defaultValue: "fallback"), "en")
+            let notification = expectation(description: "API context notification")
+            let apiSubscription = OpenFeatureAPI.shared.observe().sink { event in
+                if case .configurationChanged = event { notification.fulfill() }
+            }
+            f.setContext(["country": .string("nl")])
+            await fulfillment(of: [notification], timeout: 2)
+            apiSubscription.cancel()
+            XCTAssertEqual(client.getStringValue(key: "variable:message", defaultValue: "fallback"), "nl")
+            f.setContext([:], replace: true)
+            XCTAssertEqual(client.getStringValue(key: "variable:message", defaultValue: "fallback"), "en")
+            await OpenFeatureAPI.shared.setEvaluationContextAndWait(evaluationContext: ImmutableContext(attributes: ["country": .string("nl")]))
+            await fulfillment(of: [contextNotification], timeout: 2)
+            XCTAssertEqual(client.getStringValue(key: "variable:message", defaultValue: "fallback"), "nl")
+            XCTAssertEqual(events.value, ["configuration", "configuration", "context"])
+            f.setDatafile(json: "{")
+            f.setContext(["country": .string("en")])
+            XCTAssertEqual(provider.status, .error)
+            f.setDatafile(json: json, replace: true)
+            XCTAssertEqual(provider.status, .ready)
+            await fulfillment(of: [configurationNotifications], timeout: 2)
+            provider.close()
+            let count = events.value.count
+            f.setContext(["country": .string("nl")])
+            XCTAssertEqual(events.value.count, count)
+            if borrowed { XCTAssertEqual(f.getVariableString("message"), "nl") }
+            subscription.cancel()
+            supplied?.close()
+            await OpenFeatureAPI.shared.clearProviderAndWait()
+        }
+    }
+
+    func testInvalidInitialRegistrationStaysInErrorUntilDatafileRecovery() async throws {
+        let provider = FeaturevisorOpenFeatureProvider(options: FeaturevisorOptions(logLevel: .fatal), datafileJSON: #"{"schemaVersion":"2","revision":"x","features":[],"segments":{}}"#)
+        await OpenFeatureAPI.shared.setProviderAndWait(provider: provider, initialContext: ImmutableContext())
+        XCTAssertEqual(provider.status, .error)
+        provider.featurevisor.setContext(["country": .string("nl")])
+        XCTAssertEqual(provider.status, .error)
+        provider.featurevisor.setDatafile(json: datafileJSON, replace: true)
+        XCTAssertEqual(provider.status, .ready)
+        XCTAssertTrue(OpenFeatureAPI.shared.getClient().getBooleanValue(key: "checkout", defaultValue: false))
+        await OpenFeatureAPI.shared.clearProviderAndWait()
+        provider.close()
     }
 
     func testResolvesEveryTypeAndMapsTargetingKey() throws {
@@ -84,7 +182,11 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
     }
 
     func testWorksThroughOpenFeatureAPI() async throws {
-        let provider = try provider()
+        let tracked = Box<[String]>([])
+        let provider = try provider(onTrack: { name, context, _ in
+            tracked.set([name, context?.getTargetingKey() ?? ""])
+        })
+        defer { provider.close() }
         await OpenFeatureAPI.shared.setProviderAndWait(
             provider: provider,
             initialContext: ImmutableContext(targetingKey: "forced-user")
@@ -95,6 +197,15 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
             defaultValue: false
         )
         XCTAssertTrue(value)
+        XCTAssertEqual(client.getBooleanDetails(key: "checkout", defaultValue: false).reason, "TARGETING_MATCH")
+        let missing = client.getStringDetails(key: "variable:missing", defaultValue: "fallback")
+        XCTAssertEqual(missing.value, "fallback")
+        XCTAssertEqual(missing.reason, "ERROR")
+        XCTAssertEqual(missing.errorCode, .flagNotFound)
+        client.track(key: "purchase")
+        XCTAssertEqual(tracked.value, ["purchase", "forced-user"])
+        XCTAssertTrue(provider.featurevisor.setDatafile(json: datafileJSON.replacingOccurrences(of: "Hello", with: "Updated"), replace: true))
+        XCTAssertEqual(client.getStringValue(key: "checkout:title", defaultValue: "fallback"), "Updated")
     }
 
     func testProviderBorrowsExistingFeaturevisor() throws {
@@ -156,7 +267,7 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
         XCTAssertEqual(integer.value, 3)
         XCTAssertNil(integer.errorCode)
 
-        let nonFiniteModule = FeaturevisorModule(name: "non-finite", after: { evaluation, _ in
+        let nonFiniteModule = FeaturevisorModule(name: "non-finite", afterEvaluation: { evaluation, _ in
             var updated = evaluation
             if updated.variableKey == "ratio" { updated.variableValue = .double(.infinity) }
             return updated
@@ -172,7 +283,6 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
 
     func testMapsAllFeaturevisorReasons() throws {
         let mappings: [(EvaluationReason, String)] = [
-            (.required, Reason.targetingMatch.rawValue),
             (.forced, Reason.targetingMatch.rawValue),
             (.sticky, Reason.targetingMatch.rawValue),
             (.rule, Reason.targetingMatch.rawValue),
@@ -182,13 +292,14 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
             (.disabled, Reason.disabled.rawValue),
             (.variationDisabled, Reason.disabled.rawValue),
             (.variableDisabled, Reason.disabled.rawValue),
-            (.outOfRange, Reason.defaultReason.rawValue),
+            (.conditionsUnmet, Reason.disabled.rawValue),
+            (.variableComposed, Reason.targetingMatch.rawValue),
             (.noMatch, Reason.defaultReason.rawValue),
             (.variableDefault, Reason.defaultReason.rawValue),
         ]
 
         for (featurevisorReason, openFeatureReason) in mappings {
-            let module = FeaturevisorModule(name: "reason", after: { evaluation, _ in
+            let module = FeaturevisorModule(name: "reason", afterEvaluation: { evaluation, _ in
                 var updated = evaluation
                 updated.reason = featurevisorReason
                 return updated
@@ -199,8 +310,20 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
         }
     }
 
+    func testUnmetPrerequisiteReturnsDisabledReason() throws {
+        var datafile = try DatafileContent.fromJSON(datafileJSON)
+        datafile.features["checkout"]?.requiredFeatures = [.feature("missing")]
+        let provider = FeaturevisorOpenFeatureProvider(options: FeaturevisorOptions(datafile: datafile, logLevel: .fatal))
+
+        let result = try provider.getBooleanEvaluation(key: "checkout", defaultValue: true, context: nil)
+        XCTAssertFalse(result.value)
+        XCTAssertEqual(result.reason, Reason.disabled.rawValue)
+        XCTAssertEqual(result.flagMetadata["featurevisorReason"], .string("conditions_unmet"))
+        XCTAssertNil(result.errorCode)
+    }
+
     func testMapsGeneralErrorsAndAllAvailableMetadata() throws {
-        let module = FeaturevisorModule(name: "metadata", after: { evaluation, _ in
+        let module = FeaturevisorModule(name: "metadata", afterEvaluation: { evaluation, _ in
             var updated = evaluation
             updated.reason = .error
             updated.error = "Evaluation failed"
@@ -230,7 +353,7 @@ final class FeaturevisorOpenFeatureProviderTests: XCTestCase {
 
     func testMapsTargetingKeyDatesArraysAndNestedContextWithoutMutation() throws {
         let captured = Box<Context?>(nil)
-        let module = FeaturevisorModule(name: "capture", before: { options in
+        let module = FeaturevisorModule(name: "capture", beforeEvaluation: { options in
             captured.set(options.dependencies.context)
             return options
         })

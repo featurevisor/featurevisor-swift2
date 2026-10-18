@@ -4,10 +4,10 @@ import PackageDescription
 let package = Package(
     name: "featurevisor-swift2",
     platforms: [
-        .iOS(.v14),
-        .macOS(.v11),
-        .tvOS(.v14),
-        .watchOS(.v7),
+        .iOS(.v15),
+        .macOS(.v12),
+        .tvOS(.v15),
+        .watchOS(.v8),
     ],
     products: [
         .library(
@@ -24,7 +24,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/open-feature/swift-sdk.git", .upToNextMinor(from: "0.5.0"))
+        .package(url: "https://github.com/open-feature/swift-sdk.git", .upToNextMinor(from: "0.7.0"))
     ],
     targets: [
         .target(
@@ -55,7 +55,8 @@ let package = Package(
                 "FeaturevisorOpenFeature",
                 .product(name: "OpenFeature", package: "swift-sdk")
             ],
-            path: "Tests/FeaturevisorOpenFeatureTests"
+            path: "Tests/FeaturevisorOpenFeatureTests",
+            resources: [.process("Fixtures")]
         ),
         .testTarget(
             name: "FeaturevisorCLITests",
