@@ -16,12 +16,12 @@ create_consumer() {
 
   mkdir -p "$directory/Sources/$name"
   cat > "$directory/Package.swift" <<EOF
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(
     name: "$name",
-    platforms: [.macOS(.v11)],
+    platforms: [.macOS(.v12)],
     dependencies: [$dependencies],
     targets: [
         .executableTarget(
@@ -48,7 +48,7 @@ create_consumer \
 
 create_consumer \
   "OpenFeatureConsumer" \
-  '.package(path: "'"$package_path"'"), .package(url: "https://github.com/open-feature/swift-sdk.git", .upToNextMinor(from: "0.5.0"))' \
+  '.package(path: "'"$package_path"'"), .package(url: "https://github.com/open-feature/swift-sdk.git", .upToNextMinor(from: "0.7.0"))' \
   '.product(name: "Featurevisor", package: "featurevisor-swift2"), .product(name: "FeaturevisorOpenFeature", package: "featurevisor-swift2"), .product(name: "OpenFeature", package: "swift-sdk")' \
   $'import Featurevisor\nimport FeaturevisorOpenFeature\nimport OpenFeature' \
   'let provider = FeaturevisorOpenFeatureProvider(); print(provider.metadata.name ?? "Featurevisor")'

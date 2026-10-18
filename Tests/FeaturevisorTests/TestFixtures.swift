@@ -15,7 +15,6 @@ enum TestFixtures {
                     key: "test",
                     hash: "h1",
                     deprecated: nil,
-                    required: nil,
                     variablesSchema: [
                         "color": ResolvedVariableSchema(deprecated: nil, key: "color", type: "string", defaultValue: .string("red"), description: nil, useDefaultWhenDisabled: nil, disabledValue: nil),
                         "count": ResolvedVariableSchema(deprecated: nil, key: "count", type: "integer", defaultValue: .int(1), description: nil, useDefaultWhenDisabled: nil, disabledValue: nil),
@@ -28,8 +27,7 @@ enum TestFixtures {
                     ],
                     force: [
                         Force(conditions: .predicate(ConditionPredicate(attribute: "userId", operator: "equals", value: .string("forced"))), segments: nil, enabled: true, variation: "control", variables: ["color": .string("green")]),
-                    ],
-                    ranges: nil
+                    ]
                 ),
             ]
         )

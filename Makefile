@@ -4,14 +4,14 @@ install:
 	swift package update
 
 build:
-	swift build
+	swift build --jobs 2
 
 test:
-	swift test
+	swift test --jobs 2
 
 test-example-1:
-	swift test
-	swift run featurevisor test --projectDirectoryPath=$(abspath ../featurevisor/examples/example-1) --onlyFailures
+	swift test --jobs 2
+	swift run --jobs 2 featurevisor test --projectDirectoryPath=$(abspath ../featurevisor/examples/example-1) --onlyFailures
 
 clean:
 	swift package clean

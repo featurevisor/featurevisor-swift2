@@ -19,8 +19,16 @@ private func resolvePath(_ context: Context, _ path: String) -> AnyValue? {
     var cursor = context[first]
 
     for part in parts.dropFirst() {
-        guard let current = cursor, case .object(let object) = current else { return nil }
-        cursor = object[part]
+        guard let current = cursor else { return nil }
+        if case .object(let object) = current {
+            cursor = object[part]
+        } else if case .array(let array) = current {
+            if part == "length" { cursor = .int(array.count) }
+            else if let index = Int(part), String(index) == part, array.indices.contains(index) { cursor = array[index] }
+            else { return nil }
+        } else {
+            return nil
+        }
     }
 
     return cursor
@@ -37,30 +45,102 @@ private func toDouble(_ value: AnyValue?) -> Double? {
 
 typealias FeaturevisorRegexProvider = (_ pattern: String, _ flags: String?) throws -> NSRegularExpression
 
+func normalizePortableRegex(_ pattern: String) -> String {
+    let inside: [Character: String] = [
+        "d": "0-9", "D": #"\x{0}-\x{2F}\x{3A}-\x{10FFFF}"#,
+        "w": "A-Za-z0-9_", "W": #"\x{0}-\x{2F}\x{3A}-\x{40}\x{5B}-\x{5E}\x{60}\x{7B}-\x{10FFFF}"#,
+    ]
+    let outside: [Character: String] = [
+        "d": "[0-9]", "D": "[^0-9]", "w": "(?-i:[A-Za-z0-9_])", "W": "(?-i:[^A-Za-z0-9_])",
+    ]
+    var result = ""
+    var inClass = false
+    var iterator = pattern.makeIterator()
+    while let character = iterator.next() {
+        if character == "\\" {
+            guard let code = iterator.next() else {
+                result.append(character)
+                break
+            }
+            if let replacement = (inClass ? inside : outside)[code] {
+                result.append(contentsOf: replacement)
+            } else {
+                result.append("\\")
+                result.append(code)
+            }
+            continue
+        }
+        if character == "[" && !inClass {
+            inClass = true
+        } else if character == "]" && inClass {
+            inClass = false
+        }
+        result.append(character)
+    }
+    return result
+}
+
 private func parseISO8601Date(_ value: String) -> Date? {
+    let pattern = #"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.([0-9]{1,9}))?(Z|([+-])([0-9]{2}):([0-9]{2}))$"#
+    guard let regex = try? NSRegularExpression(pattern: pattern),
+          let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+          match.range.length == value.utf16.count else { return nil }
+    func part(_ index: Int) -> Int? {
+        guard let range = Swift.Range<String.Index>(match.range(at: index), in: value) else { return nil }
+        return Int(value[range])
+    }
+    let offsetHour = part(10) ?? 0
+    let offsetMinute = part(11) ?? 0
+    guard offsetHour <= 14, offsetMinute <= 59,
+          !(offsetHour == 14 && offsetMinute != 0),
+          let year = part(1), year >= 1, let month = part(2), let day = part(3),
+          let hour = part(4), hour <= 23, let minute = part(5), minute <= 59,
+          let second = part(6), second <= 59 else { return nil }
+    let offset = (offsetHour * 60 + offsetMinute) * 60 * (value.suffix(6).first == "-" ? -1 : 1)
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: offset)!
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = fractional.date(from: value) {
-        return date
+    var normalized = value
+    if let range = Swift.Range(match.range(at: 7), in: value) {
+        normalized.replaceSubrange(range, with: value[range].prefix(3))
     }
-
-    return ISO8601DateFormatter().date(from: value)
+    guard let date = (part(7) == nil ? ISO8601DateFormatter() : fractional).date(from: normalized) else { return nil }
+    let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    guard components.year == year, components.month == month, components.day == day,
+          components.hour == hour, components.minute == minute, components.second == second else { return nil }
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(secondsFromGMT: 0)!
+    let utcParts = utc.dateComponents([.era, .year], from: date)
+    guard utcParts.era == 1, let utcYear = utcParts.year, (1...9999).contains(utcYear) else { return nil }
+    return Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded() / 1000)
 }
 
 private func uncachedRegex(_ pattern: String, _ flags: String?) throws -> NSRegularExpression {
-    try NSRegularExpression(pattern: pattern, options: try regexOptions(flags))
+    try NSRegularExpression(pattern: normalizePortableRegex(pattern), options: try regexOptions(flags))
 }
 
-private func conditionIsMatchedThrowing(
-    _ condition: ConditionPredicate,
-    context: Context,
+func valueIsMatchedThrowing(
+    _ attr: AnyValue?,
+    operator op: String,
+    expected: AnyValue?,
+    regexFlags: String? = nil,
     getRegex: FeaturevisorRegexProvider
 ) throws -> Bool {
-    let attr = resolvePath(context, condition.attribute)
-    let op = condition.operator
-    let expected = condition.value
-
     switch op {
+    case "isNull":
+        return attr == .null
+    case "notNull":
+        return attr != nil && attr != .null
+    case "empty", "notEmpty":
+        let isEmpty: Bool
+        switch attr {
+        case .string(let value)?: isEmpty = value.isEmpty
+        case .array(let value)?: isEmpty = value.isEmpty
+        case .object(let value)?: isEmpty = value.isEmpty
+        default: return false
+        }
+        return op == "empty" ? isEmpty : !isEmpty
     case "before", "after":
         guard case .string(let current)? = attr, case .string(let target)? = expected else { return false }
         guard hasExplicitTimezone(current), hasExplicitTimezone(target),
@@ -84,6 +164,16 @@ private func conditionIsMatchedThrowing(
         guard let attr, let expected else { return false }
         if case .array(let values) = attr { return values.contains(where: { anyValueEquals($0, expected) }) }
         return false
+    case "includesAny", "notIncludesAny":
+        guard case .array(let values)? = attr, case .array(let candidates)? = expected else { return false }
+        for candidate in candidates {
+            switch candidate {
+            case .string, .int, .double, .bool, .null: break
+            default: return false
+            }
+        }
+        let found = candidates.contains { candidate in values.contains { anyValueEquals($0, candidate) } }
+        return op == "includesAny" ? found : !found
     case "notIncludes":
         guard let attr, let expected else { return false }
         if case .array(let values) = attr { return !values.contains(where: { anyValueEquals($0, expected) }) }
@@ -148,17 +238,31 @@ private func conditionIsMatchedThrowing(
         return result == .lessThan || result == .equal
     case "matches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
-        let regex = try getRegex(pattern, condition.regexFlags)
+        let regex = try getRegex(pattern, regexFlags)
         let range = NSRange(location: 0, length: current.utf16.count)
         return regex.firstMatch(in: current, options: [], range: range) != nil
     case "notMatches":
         guard case .string(let current)? = attr, case .string(let pattern)? = expected else { return false }
-        let regex = try getRegex(pattern, condition.regexFlags)
+        let regex = try getRegex(pattern, regexFlags)
         let range = NSRange(location: 0, length: current.utf16.count)
         return regex.firstMatch(in: current, options: [], range: range) == nil
     default:
         return false
     }
+}
+
+private func conditionIsMatchedThrowing(
+    _ condition: ConditionPredicate,
+    context: Context,
+    getRegex: FeaturevisorRegexProvider
+) throws -> Bool {
+    try valueIsMatchedThrowing(
+        resolvePath(context, condition.attribute),
+        operator: condition.operator,
+        expected: condition.value,
+        regexFlags: condition.regexFlags,
+        getRegex: getRegex
+    )
 }
 
 func conditionIsMatched(_ condition: ConditionPredicate, context: Context) -> Bool {
@@ -197,7 +301,7 @@ func _allConditionsAreMatched(
     switch condition {
     case .all:
         return true
-    case .invalidToken:
+    case .null, .invalid, .feature, .variable, .invalidToken:
         return false
     case .predicate(let predicate):
         do {
@@ -216,7 +320,7 @@ func _allConditionsAreMatched(
             return false
         }
     case .and(let list):
-        return list.allSatisfy {
+        return !list.isEmpty && list.allSatisfy {
             _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
         }
     case .or(let list):
@@ -224,11 +328,11 @@ func _allConditionsAreMatched(
             _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
         }
     case .not(let list):
-        return !list.allSatisfy {
+        return !list.isEmpty && !list.allSatisfy {
             _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
         }
     case .list(let list):
-        return list.allSatisfy {
+        return !list.isEmpty && list.allSatisfy {
             _allConditionsAreMatched($0, context: context, reportDiagnostic: reportDiagnostic, getRegex: getRegex)
         }
     }

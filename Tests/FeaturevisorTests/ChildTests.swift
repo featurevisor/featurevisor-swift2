@@ -18,6 +18,25 @@ final class ChildTests: XCTestCase {
         XCTAssertEqual(child.evaluateFlag("another").reason, .sticky)
     }
 
+    func testDefaultChildDoesNotInheritParentStickyValues() throws {
+        let datafile = try DatafileContent.fromJSON(#"{"schemaVersion":"2","revision":"child-sticky","segments":{},"features":{"source":{"bucketBy":"userId","force":[{"segments":"*","enabled":false}],"traffic":[]},"byFeature":{"bucketBy":"userId","requiredFeatures":["source"],"traffic":[{"key":"all","segments":"*","percentage":100000}]},"byGlobal":{"bucketBy":"userId","conditions":[{"variable":"setting","operator":"equals","value":"datafile"}],"traffic":[{"key":"all","segments":"*","percentage":100000}]}},"variables":{"setting":{"type":"string","defaultValue":"datafile"}}}"#)
+        let sdk = createFeaturevisor(FeaturevisorOptions(
+            datafile: datafile,
+            stickyFeatures: ["source": EvaluatedFeature(enabled: true)],
+            stickyVariables: ["setting": .string("parent")]
+        ))
+        let child = sdk.spawn()
+
+        XCTAssertTrue(sdk.isEnabled("source"))
+        XCTAssertEqual(sdk.getVariableString("setting"), "parent")
+        XCTAssertFalse(child.isEnabled("source"))
+        XCTAssertEqual(child.getVariableString("setting"), "datafile")
+        XCTAssertTrue(sdk.isEnabled("byFeature"))
+        XCTAssertFalse(child.isEnabled("byFeature"))
+        XCTAssertFalse(sdk.isEnabled("byGlobal"))
+        XCTAssertTrue(child.isEnabled("byGlobal"))
+    }
+
     func testChildDelegatesParentEventsForDatafileSet() {
         let sdk = createFeaturevisor(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
         let child = sdk.spawn()

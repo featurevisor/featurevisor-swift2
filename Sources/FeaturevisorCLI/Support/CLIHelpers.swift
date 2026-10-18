@@ -2,7 +2,48 @@ import Foundation
 import Featurevisor
 
 enum CLIHelpers {
-    static let noEnvironmentKey = "__no_environment__"
+
+    static func projectSets(options: CLIOptions, config: [String: Any]) throws -> [String] {
+        if (options.setProvided || !options.set.isEmpty), config["sets"] as? Bool != true {
+            throw NSError(domain: "FeaturevisorCLI", code: 1, userInfo: [NSLocalizedDescriptionKey: "This project does not use Sets. Omit --set"])
+        }
+        if !options.set.isEmpty { return [options.set] }
+        guard config["sets"] as? Bool == true else { return [""] }
+        let root = URL(fileURLWithPath: options.projectDirectoryPath, isDirectory: true)
+        let directory = URL(fileURLWithPath: config["setsDirectoryPath"] as? String ?? "sets", isDirectory: true, relativeTo: root).absoluteURL
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        ).filter {
+            let values = try $0.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            return values.isDirectory == true && values.isSymbolicLink != true
+        }.map(\.lastPathComponent).sorted()
+        guard !entries.isEmpty else {
+            throw NSError(domain: "FeaturevisorCLI", code: 1, userInfo: [NSLocalizedDescriptionKey: "No project sets found in \(directory.path)"])
+        }
+        return entries
+    }
+
+    static func runRuntimeSelections(_ options: CLIOptions, evaluate: (CLIOptions) -> Int32) -> Int32 {
+        do {
+            guard let config = try FeaturevisorProcess.runJSON(projectDirectoryPath: options.projectDirectoryPath, args: ["config", "--json"]) as? [String: Any] else {
+                throw NSError(domain: "FeaturevisorCLI", code: 1, userInfo: [NSLocalizedDescriptionKey: "Configuration output was not an object"])
+            }
+            let sets = try projectSets(options: options, config: config)
+            let targets: [String?] = options.targets.isEmpty ? [nil] : options.targets.map(Optional.some)
+            for set in sets {
+                for target in targets {
+                    var selected = options
+                    selected.set = set
+                    selected.targets = target.map { [$0] } ?? []
+                    if evaluate(selected) != 0 { return 1 }
+                }
+            }
+            return 0
+        } catch {
+            fputs("\(error.localizedDescription)\n", stderr)
+            return 1
+        }
+    }
 
     static func logLevel(_ options: CLIOptions) -> LogLevel {
         if options.verbose { return .debug }
@@ -26,15 +67,15 @@ enum CLIHelpers {
         switch value {
         case let string as String:
             return .string(string)
-        case let bool as Bool:
-            return .bool(bool)
-        case let int as Int:
-            return .int(int)
         case let number as NSNumber:
             let type = String(cString: number.objCType)
             if type == "c" { return .bool(number.boolValue) }
             if type.contains("f") || type.contains("d") { return .double(number.doubleValue) }
             return .int(number.intValue)
+        case let bool as Bool:
+            return .bool(bool)
+        case let int as Int:
+            return .int(int)
         case let array as [Any]:
             return .array(array.map(anyToAnyValue))
         case let object as [String: Any]:
@@ -58,21 +99,27 @@ enum CLIHelpers {
         return try? JSONSerialization.jsonObject(with: data)
     }
 
-    static func buildDatafileJSON(projectDirectoryPath: String, environment: String?, inflate: Int, target: String? = nil) -> DatafileContent? {
+    static func buildDatafileJSON(projectDirectoryPath: String, environment: String?, inflate: Int?, target: String? = nil, set: String? = nil) -> DatafileContent? {
         var args = ["build"]
         if let environment, !environment.isEmpty {
             args.append("--environment=\(environment)")
         }
-        if inflate > 0 { args.append("--inflate=\(inflate)") }
+        if let inflate { args.append("--inflate=\(inflate)") }
         if let target { args.append("--target=\(target)") }
+        if let set, !set.isEmpty { args.append("--set=\(set)") }
         args.append("--json")
 
         let result = FeaturevisorProcess.run(projectDirectoryPath: projectDirectoryPath, args: args)
         guard result.code == 0 else {
-            fputs(result.stderr + "\n", stderr)
+            fputs((result.stderr.isEmpty ? result.stdout : result.stderr) + "\n", stderr)
             return nil
         }
-        return try? DatafileContent.fromJSON(result.stdout)
+        do {
+            return try DatafileContent.fromJSON(result.stdout)
+        } catch {
+            fputs("Could not parse built datafile: \(error.localizedDescription)\n", stderr)
+            return nil
+        }
     }
 
     static func mapStringAny(_ value: Any?) -> [String: Any]? {
@@ -165,7 +212,7 @@ enum CLIHelpers {
         if schemaType == "json",
            let expectedString = expected as? String,
            let data = expectedString.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) {
+           let parsed = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
             return compareExpected(actual, expected: parsed)
         }
 
@@ -230,10 +277,11 @@ enum CLIHelpers {
         case "variableOverrideIndex": return evaluation.variableOverrideIndex
         case "variableOverrideKey": return evaluation.variableOverrideKey
         case "variableOverridePath": return evaluation.variableOverridePath
-        case "requiredFeatures":
-            guard let value = evaluation.requiredFeatures,
+        case "variableOverridePaths": return evaluation.variableOverridePaths
+        case "conditions":
+            guard let value = evaluation.conditions,
                   let data = try? JSONEncoder().encode(value),
-                  let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+                  let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return nil }
             return object
         case "variableValue": return evaluation.variableValue?.rawValue
         default:

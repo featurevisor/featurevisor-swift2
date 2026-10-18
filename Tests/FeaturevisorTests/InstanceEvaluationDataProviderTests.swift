@@ -1,7 +1,86 @@
 import XCTest
 @testable import Featurevisor
 
+private struct PortableConditionFixture: Decodable {
+    struct Case: Decodable {
+        let name: String
+        let condition: Condition
+        let context: Context
+        let expected: Bool
+    }
+    let conditionCases: [Case]
+}
+
 final class InstanceEvaluationDataProviderTests: XCTestCase {
+    private func match(_ condition: Condition, datafile: DatafileContent, context: Context) -> Bool {
+        var datafile = datafile
+        let raw: [String: Any] = [
+            "bucketBy": "userId",
+            "conditions": try! JSONSerialization.jsonObject(with: JSONEncoder().encode(condition), options: [.fragmentsAllowed]),
+            "traffic": [["key": "all", "conditions": "*", "percentage": 100000]],
+        ]
+        datafile.features["__subject"] = try! JSONDecoder().decode(Feature.self, from: JSONSerialization.data(withJSONObject: raw))
+        let f = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: .fatal))
+        defer { f.close() }
+        return f.isEnabled("__subject", context)
+    }
+
+    private func stringifiedReader() -> InstanceEvaluationDataProvider {
+        var datafile = TestFixtures.basicDatafile()
+        datafile.schemaVersion = "4"
+        datafile.features["test"]?.conditions = .invalidToken("[{\"attribute\":\"country\",\"operator\":\"equals\",\"value\":\"nl\"}]")
+        datafile.segments["nl"]?.conditions = .string("[{\"attribute\":\"country\",\"operator\":\"equals\",\"value\":\"nl\"}]")
+        return InstanceEvaluationDataProvider(datafile: datafile, reportDiagnostic: { _ in })
+    }
+
+    func testLateTrafficScanKeepsFirstMatchAndMetadataOwnership() throws {
+        var traffic = (0..<128).map { index in
+            Traffic(
+                key: "rule-\(index)", segments: .key("missing"), percentage: 100000,
+                enabled: nil, variation: nil, variables: ["source": .string("original")],
+                variationWeights: nil, variableOverrides: nil, allocation: nil
+            )
+        }
+        traffic[126].segments = .all
+        traffic[127].segments = .all
+
+        var datafile = TestFixtures.basicDatafile()
+        datafile.features["test"]?.force = nil
+        datafile.features["test"]?.traffic = traffic
+        let f = createFeaturevisor(FeaturevisorOptions(datafile: datafile, logLevel: .fatal))
+        defer { f.close() }
+        var matched = try XCTUnwrap(f.evaluateFlag("test").traffic)
+        XCTAssertEqual(matched.key, "rule-126")
+        matched.key = "caller-change"
+        matched.variables?["source"] = .string("caller-change")
+        XCTAssertEqual(traffic[126].key, "rule-126")
+        XCTAssertEqual(traffic[126].variables?["source"], .string("original"))
+    }
+
+    func testLateGlobalOverrideKeepsFirstMatchAndIndex() {
+        var overrides = (0..<128).map { index in
+            VariableOverride(
+                key: "override-\(index)", keyPath: nil, value: .string("value-\(index)"),
+                conditions: .predicate(.init(attribute: "role", operator: "equals", value: .string("missing-\(index)"))),
+                segments: nil, requiredFeatures: nil
+            )
+        }
+        let matching = Condition.predicate(.init(attribute: "role", operator: "equals", value: .string("member")))
+        overrides[126].conditions = matching
+        overrides[127].conditions = matching
+        let datafile = DatafileContent(
+            schemaVersion: "2", revision: "late", segments: [:], features: [:],
+            variables: ["message": GlobalVariable(type: "string", defaultValue: .string("default"), overrides: overrides)]
+        )
+        let sdk = createFeaturevisor(FeaturevisorOptions(datafile: datafile))
+
+        let evaluation = sdk.evaluateVariable("message", context: ["role": .string("member")])
+        XCTAssertEqual(evaluation.reason, .variableOverrideRule)
+        XCTAssertEqual(evaluation.variableOverrideIndex, 126)
+        XCTAssertEqual(evaluation.variableOverrideKey, "override-126")
+        XCTAssertEqual(evaluation.variableValue, .string("value-126"))
+    }
+
     func testCachesCompiledRegularExpressionsByPatternAndFlags() {
         let reader = InstanceEvaluationDataProvider(
             datafile: TestFixtures.basicDatafile(),
@@ -59,10 +138,40 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
         XCTAssertEqual(reader.getCachedRegexCount(), 1)
     }
 
+    func testCachesStringifiedExpressionsPerProviderGeneration() throws {
+        let reader = stringifiedReader()
+        for _ in 0..<2 {
+            XCTAssertEqual(reader.getFeature("test")?.conditions, .list([.predicate(.init(attribute: "country", operator: "equals", value: .string("nl")))]))
+            XCTAssertNotNil(reader.getSegment("nl"))
+        }
+        XCTAssertEqual(reader.getCachedEntityCount(), 2)
+        XCTAssertEqual(stringifiedReader().getCachedEntityCount(), 0)
+    }
+
+    func testStringifiedExpressionCacheSupportsConcurrentEvaluations() {
+        let reader = stringifiedReader()
+        DispatchQueue.concurrentPerform(iterations: 1_000) { _ in
+            XCTAssertNotNil(reader.getFeature("test"))
+            XCTAssertNotNil(reader.getSegment("nl"))
+        }
+        XCTAssertEqual(reader.getCachedEntityCount(), 2)
+    }
+
+    func testCloseReleasesAndDisablesExpressionCache() {
+        let reader = stringifiedReader()
+        _ = reader.getFeature("test")
+        _ = reader.getSegment("nl")
+        reader.closeEntityCache()
+        XCTAssertEqual(reader.getCachedEntityCount(), 0)
+        _ = reader.getFeature("test")
+        _ = reader.getSegment("nl")
+        XCTAssertEqual(reader.getCachedEntityCount(), 0)
+    }
+
     func testSharedV3ConformanceFixture() throws {
         let data = try Data(contentsOf: URL(fileURLWithPath: "conformance/sdk-v3.json"))
         let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(fixture["version"] as? Int, 6)
+        XCTAssertEqual(fixture["version"] as? Int, 15)
 
         let bucketing = fixture["bucketing"] as! [String: Any]
         let expected = bucketing["allocationExpectations"] as! [String: String]
@@ -120,18 +229,19 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
             )
         }
 
-        let conditionCases = fixture["conditionCases"] as! [[String: Any]]
+        let conditionCases = try JSONDecoder().decode(PortableConditionFixture.self, from: data).conditionCases
+        XCTAssertEqual(conditionCases.count, 189)
+        var executedAnyCases = 0
         for testCase in conditionCases {
-            let conditionData = try JSONSerialization.data(withJSONObject: testCase["condition"]!)
-            let contextData = try JSONSerialization.data(withJSONObject: testCase["context"]!)
-            let condition = try JSONDecoder().decode(Condition.self, from: conditionData)
-            let context = try JSONDecoder().decode(Context.self, from: contextData)
+            if testCase.name.lowercased().contains("includesany") { executedAnyCases += 1 }
             XCTAssertEqual(
-                reader.allConditionsAreMatched(condition, context: context),
-                testCase["expected"] as! Bool,
-                testCase["name"] as! String
+                reader.allConditionsAreMatched(testCase.condition, context: testCase.context),
+                testCase.expected,
+                testCase.name
             )
         }
+
+        XCTAssertEqual(executedAnyCases, 73)
 
         let defaults = fixture["defaults"] as! [String: Any]
         let aggregateCase = defaults["aggregateCase"] as! [String: Any]
@@ -235,15 +345,12 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
     }
 
     func testMatchedTrafficAndForce() {
-        let reader = InstanceEvaluationDataProvider(datafile: TestFixtures.basicDatafile(), reportDiagnostic: { _ in })
-        let feature = reader.getFeature("test")!
-
-        let traffic = reader.getMatchedTraffic(feature.traffic, context: ["userId": .string("123")])
-        XCTAssertEqual(traffic?.key, "1")
-
-        let force = reader.getMatchedForce(feature, context: ["userId": .string("forced")])
-        XCTAssertEqual(force.force?.variation, "control")
-        XCTAssertEqual(force.index, 0)
+        let f = createFeaturevisor(FeaturevisorOptions(datafile: TestFixtures.basicDatafile(), logLevel: .fatal))
+        defer { f.close() }
+        XCTAssertEqual(f.evaluateFlag("test", context: ["userId": .string("123")]).traffic?.key, "1")
+        let forced = f.evaluateVariation("test", context: ["userId": .string("forced")])
+        XCTAssertEqual(forced.force?.variation, "control")
+        XCTAssertEqual(forced.forceIndex, 0)
     }
 
     func testNotSegmentsNegateImplicitAnd() {
@@ -257,12 +364,10 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
             ],
             features: [:]
         )
-        let reader = InstanceEvaluationDataProvider(datafile: datafile, reportDiagnostic: { _ in })
-
-        let notAll = GroupSegment.not([.key("mobile"), .key("nl")])
-        XCTAssertFalse(reader.allSegmentsAreMatched(notAll, context: ["device": .string("mobile"), "country": .string("nl")]))
-        XCTAssertTrue(reader.allSegmentsAreMatched(notAll, context: ["device": .string("desktop"), "country": .string("nl")]))
-        XCTAssertFalse(reader.allSegmentsAreMatched(.not([]), context: [:]))
+        let notAll = Condition.not([.invalidToken("mobile"), .invalidToken("nl")])
+        XCTAssertFalse(match(notAll, datafile: datafile, context: ["device": .string("mobile"), "country": .string("nl")]))
+        XCTAssertTrue(match(notAll, datafile: datafile, context: ["device": .string("desktop"), "country": .string("nl")]))
+        XCTAssertFalse(match(.not([]), datafile: datafile, context: [:]))
     }
 
     func testNotSegmentsWithNestedOrMeanNoneMatch() {
@@ -275,11 +380,9 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
             ],
             features: [:]
         )
-        let reader = InstanceEvaluationDataProvider(datafile: datafile, reportDiagnostic: { _ in })
-
-        let noneOfDevices = GroupSegment.not([.or([.key("mobile"), .key("desktop")])])
-        XCTAssertFalse(reader.allSegmentsAreMatched(noneOfDevices, context: ["device": .string("mobile")]))
-        XCTAssertTrue(reader.allSegmentsAreMatched(noneOfDevices, context: ["device": .string("tv")]))
+        let noneOfDevices = Condition.not([.or([.invalidToken("mobile"), .invalidToken("desktop")])])
+        XCTAssertFalse(match(noneOfDevices, datafile: datafile, context: ["device": .string("mobile")]))
+        XCTAssertTrue(match(noneOfDevices, datafile: datafile, context: ["device": .string("tv")]))
     }
 
     func testReportsConditionMatchAndParseDiagnostics() {
@@ -326,7 +429,8 @@ final class InstanceEvaluationDataProviderTests: XCTestCase {
             reportDiagnostic: { diagnostic in diagnostics.mutate { $0.append(diagnostic) } }
         )
 
-        XCTAssertTrue(reader.segmentIsMatched(reader.getSegment("all")!, context: [:]))
+        XCTAssertNotNil(reader.getSegment("all"))
+        XCTAssertTrue(match(.invalidToken("all"), datafile: datafile, context: [:]))
         XCTAssertFalse(diagnostics.value.contains { $0.code == "conditions_parse_error" })
     }
 }

@@ -1,13 +1,22 @@
 {
-  "originHash" : "7f45dbb0d6994027f7b0bbf0fbc4efa8e24757c603648dcbb2daedf841dd5c80",
+  "originHash" : "719b1e4ac42737b0dd796685bbca51ad6b36a71e40934eaaad9826ae5a3892cd",
   "pins" : [
+    {
+      "identity" : "swift-log",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-log",
+      "state" : {
+        "revision" : "2778fd4e5a12a8aaa30a3ee8285f4ce54c5f3181",
+        "version" : "1.9.1"
+      }
+    },
     {
       "identity" : "swift-sdk",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/open-feature/swift-sdk.git",
       "state" : {
-        "revision" : "d71686219a65ab78f77923ceb0e2ea549e1e50ef",
-        "version" : "0.5.0"
+        "revision" : "19c0de402027db6b69bf055b134f3123ea97f2f2",
+        "version" : "0.7.0"
       }
     }
   ],

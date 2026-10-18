@@ -73,6 +73,25 @@ final class InstanceTests: XCTestCase {
         XCTAssertTrue(diagnostics.value.contains("deprecated_feature"))
     }
 
+    func testEvaluatorDiagnosticAudienceTracksThresholdChangesFromCallback() {
+        let observed = ConcurrencyBox<[FeaturevisorDiagnostic]>([])
+        let sdkBox = ConcurrencyBox<Featurevisor?>(nil)
+        let sdk = createFeaturevisor(FeaturevisorOptions(
+            logLevel: .debug,
+            onDiagnostic: { diagnostic in
+                guard diagnostic.code == "feature_not_found" else { return }
+                observed.mutate { $0.append(diagnostic) }
+                sdkBox.value?.setLogLevel(.fatal)
+            }
+        ))
+        sdkBox.value = sdk
+
+        _ = sdk.isEnabled("missing")
+        _ = sdk.isEnabled("missing")
+
+        XCTAssertEqual(observed.value.count, 1)
+    }
+
     func testSetDatafileMergesByDefaultAndReplacesWhenRequested() {
         let sdk = createFeaturevisor(FeaturevisorOptions(datafile: TestFixtures.basicDatafile()))
 
@@ -86,24 +105,22 @@ final class InstanceTests: XCTestCase {
                     key: "second",
                     hash: nil,
                     deprecated: nil,
-                    required: nil,
                     variablesSchema: nil,
                     disabledVariationValue: nil,
                     variations: nil,
                     bucketBy: .single("userId"),
                     traffic: [Traffic(key: "all", segments: .all, percentage: 100_000, enabled: true, variation: nil, variables: nil, variationWeights: nil, variableOverrides: nil, allocation: nil)],
-                    force: nil,
-                    ranges: nil
+                    force: nil
                 ),
             ]
         )
 
-        sdk.setDatafile(secondDatafile)
+        XCTAssertTrue(sdk.setDatafile(secondDatafile))
         XCTAssertNotNil(sdk.getFeature("test"))
         XCTAssertNotNil(sdk.getFeature("second"))
         XCTAssertEqual(sdk.getRevision(), "2")
 
-        sdk.setDatafile(secondDatafile, replace: true)
+        XCTAssertTrue(sdk.setDatafile(secondDatafile, replace: true))
         XCTAssertNil(sdk.getFeature("test"))
         XCTAssertNotNil(sdk.getFeature("second"))
     }

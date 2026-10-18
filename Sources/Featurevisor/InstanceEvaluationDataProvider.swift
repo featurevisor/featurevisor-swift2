@@ -7,47 +7,143 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
     private let features: [FeatureKey: Feature]
     private let variables: [VariableKey: GlobalVariable]
     private let reportDiagnostic: FeaturevisorDiagnosticHandler
+    private var dependencyIndex: DatafileDependencyIndex?
+    private var retainedKeys: [Set<String>] = [[], [], []]
+    private var retainedEdgeKeys: [Set<String>] = [[], [], []]
     private var parsedSegments: [SegmentKey: Segment] = [:]
+    private var normalizedFeatures: [FeatureKey: Feature] = [:]
+    private var normalizedVariables: [VariableKey: GlobalVariable] = [:]
+    private var entityCacheEnabled = true
     private var regexCache: [String: NSRegularExpression] = [:]
     private let lock = FeaturevisorLock()
 
-    init(datafile: DatafileContent, reportDiagnostic: @escaping FeaturevisorDiagnosticHandler) {
+    init(datafile: DatafileContent, reportDiagnostic: @escaping FeaturevisorDiagnosticHandler, previous: InstanceEvaluationDataProvider? = nil, incoming: DatafileContent? = nil, replace: Bool = false) {
         self.schemaVersion = datafile.schemaVersion
         self.revision = datafile.revision
         self.segments = datafile.segments
         self.features = datafile.features
         self.variables = datafile.variables ?? [:]
         self.reportDiagnostic = reportDiagnostic
+        if let previous, let incoming,
+           !previous.features.isEmpty || !previous.variables.isEmpty || !previous.segments.isEmpty {
+            if !replace {
+                retainedKeys = [
+                    Set(previous.features.keys).subtracting(incoming.features.keys).intersection(features.keys),
+                    Set(previous.variables.keys).subtracting((incoming.variables ?? [:]).keys).intersection(variables.keys),
+                    Set(previous.segments.keys).subtracting(incoming.segments.keys).intersection(segments.keys),
+                ]
+                previous.lock.withLock {
+                    self.parsedSegments = previous.parsedSegments.filter { retainedKeys[2].contains($0.key) }
+                    self.normalizedFeatures = previous.normalizedFeatures.filter { retainedKeys[0].contains($0.key) }
+                    self.normalizedVariables = previous.normalizedVariables.filter { retainedKeys[1].contains($0.key) }
+                }
+            }
+            // Equal incoming definitions may retain edges, but never normalization or diagnostics.
+            retainedEdgeKeys = retainedKeys
+            for (key, value) in incoming.features where previous.features[key] == value {
+                retainedEdgeKeys[0].insert(key)
+            }
+            for (key, value) in incoming.variables ?? [:] where previous.variables[key] == value {
+                retainedEdgeKeys[1].insert(key)
+            }
+            for (key, value) in incoming.segments where previous.segments[key] == value {
+                retainedEdgeKeys[2].insert(key)
+            }
+        }
     }
 
     func getRevision() -> String { revision }
     func getSchemaVersion() -> String { schemaVersion }
     func getFeatureKeys() -> [FeatureKey] { Array(features.keys) }
-    func getFeature(_ key: FeatureKey) -> Feature? { features[key] }
-    func getGlobalVariableKeys() -> [VariableKey] { Array(variables.keys) }
-    func getGlobalVariable(_ key: VariableKey) -> GlobalVariable? { variables[key] }
-    func getSegmentKeys() -> [SegmentKey] { Array(segments.keys) }
-    func getSegment(_ key: SegmentKey) -> Segment? {
-        if let cached = lock.withLock({ parsedSegments[key] }) { return cached }
-        guard var segment = segments[key] else { return nil }
-        if case .string(let stringified) = segment.conditions,
-           stringified != "*",
-           let data = stringified.data(using: .utf8) {
-            do {
-                let decoded = try JSONDecoder().decode(Condition.self, from: data)
-                segment.conditions = .tree(decoded)
-                lock.withLock { parsedSegments[key] = segment }
-            } catch {
-                reportDiagnostic(FeaturevisorDiagnostic(
-                    level: .error,
-                    code: "conditions_parse_error",
-                    message: "Error parsing conditions",
-                    originalError: String(describing: error),
-                    details: ["conditions": .string(stringified)]
-                ))
-            }
+    func getRawFeature(_ key: FeatureKey) -> Feature? { features[key] }
+    func getRawGlobalVariable(_ key: VariableKey) -> GlobalVariable? { variables[key] }
+    func getRawSegment(_ key: SegmentKey) -> Segment? { segments[key] }
+    func retainsSegment(_ key: SegmentKey) -> Bool { retainedKeys[2].contains(key) }
+
+    func getFeature(_ key: FeatureKey) -> Feature? {
+        var errors: [FeaturevisorDiagnostic] = []
+        let result = lock.withLock { () -> Feature? in
+            if let cached = normalizedFeatures[key] { return cached }
+            guard let value = features[key] else { return nil }
+            var normalizer = EntityNormalizer(entityType: "feature", entityKey: key)
+            let result = normalizer.feature(value)
+            if entityCacheEnabled { normalizedFeatures[key] = result }
+            errors = normalizer.errors
+            return result
         }
-        return segment
+        errors.forEach(reportDiagnostic)
+        return result
+    }
+    func getGlobalVariableKeys() -> [VariableKey] { Array(variables.keys) }
+    func getGlobalVariable(_ key: VariableKey) -> GlobalVariable? {
+        var errors: [FeaturevisorDiagnostic] = []
+        let result = lock.withLock { () -> GlobalVariable? in
+            if let cached = normalizedVariables[key] { return cached }
+            guard let value = variables[key] else { return nil }
+            var normalizer = EntityNormalizer(entityType: "variable", entityKey: key)
+            let result = normalizer.variable(value)
+            if entityCacheEnabled { normalizedVariables[key] = result }
+            errors = normalizer.errors
+            return result
+        }
+        errors.forEach(reportDiagnostic)
+        return result
+    }
+    func getSegmentKeys() -> [SegmentKey] { Array(segments.keys) }
+    func getDependencyIndex() -> DatafileDependencyIndex {
+        lock.withLock {
+            if let dependencyIndex { return dependencyIndex }
+            let index = createDatafileDependencyIndex(DatafileContent(
+                schemaVersion: schemaVersion, revision: revision,
+                segments: segments, features: features, variables: variables
+            ))
+            if entityCacheEnabled { dependencyIndex = index }
+            return index
+        }
+    }
+    func getCachedDependencyIndexCount() -> Int {
+        lock.withLock { dependencyIndex == nil ? 0 : 1 }
+    }
+    func deriveDependencyIndex(previous: InstanceEvaluationDataProvider) -> DatafileDependencyIndex {
+        let old = previous.getDependencyIndex()
+        return lock.withLock {
+            if let dependencyIndex { return dependencyIndex }
+            // With no retained definitions every owner must be extracted anyway.
+            // Rebuild instead of copying, removing and reinserting the old graph.
+            if retainedEdgeKeys.allSatisfy({ $0.isEmpty }) {
+                let index = createDatafileDependencyIndex(DatafileContent(
+                    schemaVersion: schemaVersion, revision: revision,
+                    segments: segments, features: features, variables: variables
+                ))
+                if entityCacheEnabled { dependencyIndex = index }
+                return index
+            }
+            let replacing = [
+                Set(previous.features.keys).union(features.keys).subtracting(retainedEdgeKeys[0]),
+                Set(previous.variables.keys).union(variables.keys).subtracting(retainedEdgeKeys[1]),
+                Set(previous.segments.keys).union(segments.keys).subtracting(retainedEdgeKeys[2]),
+            ]
+            let index = createDatafileDependencyIndex(DatafileContent(
+                schemaVersion: schemaVersion, revision: revision,
+                segments: segments, features: features, variables: variables
+            ), previous: old, replacing: replacing)
+            if entityCacheEnabled { dependencyIndex = index }
+            return index
+        }
+    }
+    func getSegment(_ key: SegmentKey) -> Segment? {
+        var errors: [FeaturevisorDiagnostic] = []
+        let result = lock.withLock { () -> Segment? in
+            if let cached = parsedSegments[key] { return cached }
+            guard let value = segments[key] else { return nil }
+            var normalizer = EntityNormalizer(entityType: "segment", entityKey: key)
+            let result = normalizer.segment(value)
+            if entityCacheEnabled { parsedSegments[key] = result }
+            errors = normalizer.errors
+            return result
+        }
+        errors.forEach(reportDiagnostic)
+        return result
     }
 
     func getVariableKeys(_ featureKey: FeatureKey) -> [String] {
@@ -69,13 +165,28 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
         )
     }
 
+    func valueIsMatched(
+        _ value: AnyValue?,
+        operator op: String,
+        expected: AnyValue?,
+        regexFlags: String?
+    ) throws -> Bool {
+        try valueIsMatchedThrowing(
+            value,
+            operator: op,
+            expected: expected,
+            regexFlags: regexFlags,
+            getRegex: getRegex
+        )
+    }
+
     private func getRegex(_ pattern: String, _ flags: String?) throws -> NSRegularExpression {
         let key = "\(pattern)\u{0}\(flags ?? "")"
         if let cached = lock.withLock({ regexCache[key] }) {
             return cached
         }
 
-        let compiled = try NSRegularExpression(pattern: pattern, options: try regexOptions(flags))
+        let compiled = try NSRegularExpression(pattern: normalizePortableRegex(pattern), options: try regexOptions(flags))
         return lock.withLock {
             if let cached = regexCache[key] {
                 return cached
@@ -89,43 +200,19 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
         lock.withLock { regexCache.count }
     }
 
-    func segmentIsMatched(_ segment: Segment, context: Context) -> Bool {
-        switch segment.conditions {
-        case .tree(let condition):
-            return allConditionsAreMatched(condition, context: context)
-        case .string(let raw):
-            if raw == "*" { return true }
-            if let data = raw.data(using: .utf8), let parsed = try? JSONDecoder().decode(Condition.self, from: data) {
-                return allConditionsAreMatched(parsed, context: context)
-            }
-            return false
-        }
+    func getCachedEntityCount() -> Int {
+        lock.withLock { normalizedFeatures.count + normalizedVariables.count + parsedSegments.count }
     }
 
-    func allSegmentsAreMatched(_ groupSegments: GroupSegment, context: Context) -> Bool {
-        switch groupSegments {
-        case .all:
-            return true
-        case .key(let key):
-            if key.hasPrefix("{") || key.hasPrefix("[") {
-                if let data = key.data(using: .utf8),
-                   let parsed = try? JSONDecoder().decode(GroupSegment.self, from: data) {
-                    return allSegmentsAreMatched(parsed, context: context)
-                }
-            }
-            guard let segment = getSegment(key) else { return false }
-            return segmentIsMatched(segment, context: context)
-        case .list(let list), .and(let list):
-            return list.allSatisfy { allSegmentsAreMatched($0, context: context) }
-        case .or(let list):
-            return list.contains { allSegmentsAreMatched($0, context: context) }
-        case .not(let list):
-            return !list.allSatisfy { allSegmentsAreMatched($0, context: context) }
+    func closeEntityCache() {
+        lock.withLock {
+            normalizedFeatures.removeAll()
+            normalizedVariables.removeAll()
+            parsedSegments.removeAll()
+            regexCache.removeAll()
+            dependencyIndex = nil
+            entityCacheEnabled = false
         }
-    }
-
-    func getMatchedTraffic(_ traffic: [Traffic], context: Context) -> Traffic? {
-        traffic.first(where: { allSegmentsAreMatched($0.segments, context: context) })
     }
 
     func getMatchedAllocation(_ traffic: Traffic, bucketValue: Int) -> Allocation? {
@@ -141,29 +228,4 @@ final class InstanceEvaluationDataProvider: @unchecked Sendable {
         return nil
     }
 
-    func getMatchedForce(_ feature: Feature, context: Context) -> (force: Force?, index: Int?) {
-        guard let forces = feature.force else { return (nil, nil) }
-
-        for (index, force) in forces.enumerated() {
-            if let segments = force.segments {
-                if allSegmentsAreMatched(segments, context: context) { return (force, index) }
-                continue
-            }
-            if let conditions = force.conditions {
-                switch conditions {
-                case .invalidToken(let raw) where raw.hasPrefix("{") || raw.hasPrefix("["):
-                    if let data = raw.data(using: .utf8),
-                       let parsed = try? JSONDecoder().decode(Condition.self, from: data),
-                       allConditionsAreMatched(parsed, context: context) {
-                        return (force, index)
-                    }
-                default:
-                    if allConditionsAreMatched(conditions, context: context) { return (force, index) }
-                }
-                continue
-            }
-        }
-
-        return (nil, nil)
-    }
 }

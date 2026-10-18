@@ -6,14 +6,15 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     private var context: Context
     private var stickyFeatures: StickyFeatures?
     private var stickyVariables: StickyVariables?
+    private var stateGeneration: UInt64 = 0
     private let emitter = Emitter()
     private var parentUnsubscribers: [(UUID, FeaturevisorUnsubscribe)] = []
 
     init(parent: Featurevisor, context: Context, stickyFeatures: StickyFeatures?, stickyVariables: StickyVariables?) {
         self.parent = parent
         self.context = context
-        self.stickyFeatures = stickyFeatures
-        self.stickyVariables = stickyVariables
+        self.stickyFeatures = stickyFeatures ?? [:]
+        self.stickyVariables = stickyVariables ?? [:]
     }
 
     public func getContext(_ context: Context? = nil) -> Context {
@@ -26,6 +27,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
     public func setContext(_ context: Context, replace: Bool = false) {
         let updatedContext = lock.withLock {
             self.context = replace ? context : self.context.merging(context, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return self.context
         }
         emitter.trigger(.contextSet, payload: EventPayload([
@@ -38,6 +40,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
         let values = lock.withLock { () -> (StickyFeatures, StickyFeatures) in
             let previous = self.stickyFeatures ?? [:]
             self.stickyFeatures = replace ? sticky : (self.stickyFeatures ?? [:]).merging(sticky, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return (previous, self.stickyFeatures ?? [:])
         }
         emitter.trigger(
@@ -56,6 +59,7 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
         let values = lock.withLock { () -> (StickyVariables, StickyVariables) in
             let previous = stickyVariables ?? [:]
             stickyVariables = replace ? sticky : previous.merging(sticky, uniquingKeysWith: { _, new in new })
+            stateGeneration &+= 1
             return (previous, stickyVariables ?? [:])
         }
         emitter.trigger(.stickyVariablesSet, payload: EventPayload(getParamsForStickyVariablesSetEvent(previousStickyVariables: values.0, newStickyVariables: values.1, replace: replace)))
@@ -99,6 +103,17 @@ public final class FeaturevisorChildInstance: @unchecked Sendable {
         let values = lock.withLock { (stickyFeatures, stickyVariables) }
         merged.stickyFeatures = values.0
         merged.stickyVariables = values.1
+        merged.stickySource = StickySourceHandle { [weak self] in
+            guard let self else { return StickyStateSnapshot(features: nil, variables: nil, generation: "closed") }
+            let own = self.lock.withLock { (self.stickyFeatures, self.stickyVariables, self.stateGeneration) }
+            let parent = self.parent.stickyState()
+            return StickyStateSnapshot(
+                features: own.0,
+                variables: own.1,
+                generation: parent.generation + ":" + String(own.2),
+                evaluationData: parent.evaluationData
+            )
+        }
         return merged
     }
 

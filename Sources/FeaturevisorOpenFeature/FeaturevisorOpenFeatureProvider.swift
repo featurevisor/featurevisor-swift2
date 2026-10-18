@@ -19,11 +19,13 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private let globalVariablePrefix: String
     private let onTrack: (@Sendable (String, (any EvaluationContext)?, (any TrackingEventDetails)?) -> Void)?
     private let ownsFeaturevisor: Bool
-    private let eventHandler = EventHandler()
+    private let eventHandler = ProviderStatusTracker()
+    public var status: ProviderStatus { eventHandler.status }
     private let lock = NSLock()
     private var parseErrorMessage: String?
     private var errorUnsubscribe: FeaturevisorUnsubscribe?
     private var datafileUnsubscribe: FeaturevisorUnsubscribe?
+    private var configurationUnsubscribers: [FeaturevisorUnsubscribe] = []
     private var closed = false
 
     public init(
@@ -55,10 +57,22 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
             let message = diagnostic["message"]?.asString() ?? "Could not parse datafile"
             guard let self else { return }
             self.withLock { self.parseErrorMessage = message }
+            self.eventHandler.send(.error(ProviderEventDetails(message: message, errorCode: .parseError)))
         }
         self.datafileUnsubscribe = self.featurevisor.on(.datafileSet) { [weak self] _ in
             guard let self else { return }
-            self.withLock { self.parseErrorMessage = nil }
+            let recovering = self.withLock { () -> Bool in
+                let recovering = self.parseErrorMessage != nil
+                self.parseErrorMessage = nil
+                return recovering
+            }
+            if recovering { self.eventHandler.send(.ready()) }
+            self.eventHandler.send(.configurationChanged())
+        }
+        for event: EventName in [.contextSet, .stickyFeaturesSet, .stickyVariablesSet] {
+            configurationUnsubscribers.append(self.featurevisor.on(event) { [weak self] _ in
+                self?.eventHandler.send(.configurationChanged())
+            })
         }
 
         if featurevisor == nil, let datafileJSON {
@@ -66,9 +80,27 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         }
     }
 
-    public func initialize(initialContext: (any EvaluationContext)?) async throws {}
-    public func onContextSet(oldContext: (any EvaluationContext)?, newContext: any EvaluationContext) async throws {}
-    public func observe() -> AnyPublisher<ProviderEvent?, Never> { eventHandler.observe() }
+    public func initialize(initialContext: (any EvaluationContext)?) -> Future<Void, Never> {
+        Future { promise in
+            if let message = self.withLock({ self.parseErrorMessage }) {
+                self.eventHandler.send(.error(ProviderEventDetails(message: message, errorCode: .parseError)))
+            } else {
+                self.eventHandler.send(.ready())
+            }
+            promise(.success(()))
+        }
+    }
+    public func onContextSet(oldContext: (any EvaluationContext)?, newContext: any EvaluationContext) -> Future<Void, Never> {
+        Future { promise in
+            if let message = self.withLock({ self.parseErrorMessage }) {
+                self.eventHandler.send(.error(ProviderEventDetails(message: message, errorCode: .parseError)))
+            } else {
+                self.eventHandler.send(.contextChanged())
+            }
+            promise(.success(()))
+        }
+    }
+    public func observe() -> AnyPublisher<ProviderEvent, Never> { eventHandler.observe() }
 
     public func track(key: String, context: (any EvaluationContext)?, details: (any TrackingEventDetails)?) throws {
         onTrack?(key, context, details)
@@ -85,6 +117,8 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         datafileUnsubscribe?()
         errorUnsubscribe = nil
         datafileUnsubscribe = nil
+        for unsubscribe in configurationUnsubscribers { unsubscribe() }
+        configurationUnsubscribers.removeAll()
         if ownsFeaturevisor { featurevisor.close() }
     }
 
@@ -131,7 +165,7 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
         if parts.feature == globalVariablePrefix, let variableKey = parts.selector, !variableKey.isEmpty {
             evaluation = featurevisor.evaluateVariable(variableKey, context: fvContext, options: OverrideOptions(defaultVariableValue: defaultValue))
             value = evaluation.variableValue
-            if evaluation.globalVariable?.type == "json", case .string(let json)? = value,
+            if evaluation.globalVariable?.compose == nil, evaluation.globalVariable?.type == "json", case .string(let json)? = value,
                let data = json.data(using: .utf8), let parsed = try? JSONDecoder().decode(AnyValue.self, from: data) { value = parsed }
         } else if parts.selector == nil || parts.selector?.isEmpty == true {
             guard expected == .boolean else { return typeMismatch(key, defaultValue, expected) }
@@ -154,6 +188,9 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
             return ProviderEvaluation(value: defaultValue, flagMetadata: metadata, reason: Reason.error.rawValue, errorCode: code, errorMessage: errorMessage(evaluation))
         }
         guard let resolved = value else {
+            return ProviderEvaluation(value: defaultValue, flagMetadata: metadata, variant: variant(evaluation), reason: reason(evaluation.reason))
+        }
+        if case .null = resolved {
             return ProviderEvaluation(value: defaultValue, flagMetadata: metadata, variant: variant(evaluation), reason: reason(evaluation.reason))
         }
         guard matches(resolved, expected) else { return typeMismatch(key, defaultValue, expected, metadata: metadata) }
@@ -220,9 +257,9 @@ public final class FeaturevisorOpenFeatureProvider: FeatureProvider, @unchecked 
     private func reason(_ value: EvaluationReason) -> String {
         switch value {
         case .featureNotFound, .variableNotFound, .noVariations, .error: return Reason.error.rawValue
-        case .required, .forced, .sticky, .rule, .variableOverrideVariation, .variableOverrideRule: return Reason.targetingMatch.rawValue
+        case .variableComposed, .forced, .sticky, .rule, .variableOverrideVariation, .variableOverrideRule: return Reason.targetingMatch.rawValue
         case .allocated: return Reason.split.rawValue
-        case .disabled, .variationDisabled, .variableDisabled, .requiredFeaturesUnmet: return Reason.disabled.rawValue
+        case .disabled, .variationDisabled, .variableDisabled, .conditionsUnmet: return Reason.disabled.rawValue
         default: return Reason.defaultReason.rawValue
         }
     }
