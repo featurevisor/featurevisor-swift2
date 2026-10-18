@@ -202,7 +202,7 @@ final class NativeV4AlignmentTests: XCTestCase {
     }
 
     /// Runs on a 512 KB thread, the size of Dispatch and Swift concurrency workers.
-    private func onSmallStack<T>(_ body: @escaping () -> T) -> T {
+    private func onSmallStack<T: Sendable>(_ body: @escaping @Sendable () -> T) -> T {
         let result = ConcurrencyBox<T?>(nil)
         let done = DispatchSemaphore(value: 0)
         let thread = Thread {
