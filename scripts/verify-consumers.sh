@@ -16,7 +16,7 @@ create_consumer() {
 
   mkdir -p "$directory/Sources/$name"
   cat > "$directory/Package.swift" <<EOF
-// swift-tools-version: 6.0
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(

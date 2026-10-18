@@ -116,9 +116,9 @@ let f: Featurevisor = createFeaturevisor(
 
 Most applications only need `createFeaturevisor`, `Featurevisor`, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
 
-The SDK supports iOS 15, macOS 12, tvOS 15, and watchOS 8 or newer. Shared `Featurevisor`, child instance, and OpenFeature provider state is safe to use from concurrent callers. Module, diagnostic, event, and tracking callbacks are `@Sendable`. Callback implementations must synchronize any mutable state they capture.
+The SDK needs Swift 6.1 or later, which Xcode 16.3 and later include. It supports iOS 15, macOS 12, tvOS 15, and watchOS 8 or newer. Shared `Featurevisor`, child instance, and OpenFeature provider state is safe to use from concurrent callers. Module, diagnostic, event, and tracking callbacks are `@Sendable`. Callback implementations must synchronize any mutable state they capture.
 
-These deployment minimums follow the optional OpenFeature Swift SDK 0.6 integration. Applications selecting only the `Featurevisor` product do not link OpenFeature.
+These minimums follow the optional OpenFeature Swift SDK 0.7 integration. Applications selecting only the `Featurevisor` product do not link OpenFeature.
 
 See the [SwiftUI iOS example application](https://github.com/featurevisor/featurevisor-example-ios) for a small application that fetches a datafile and evaluates a flag, variation, and variable.
 
@@ -765,7 +765,7 @@ See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeat
 
 ## CLI usage
 
-Build the executable from this SDK repository with Swift 6 or later:
+Build the executable from this SDK repository with Swift 6.1 or later:
 
 ```bash
 swift build --product featurevisor

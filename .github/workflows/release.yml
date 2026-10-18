@@ -21,7 +21,7 @@ env:
 
 jobs:
   validate:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
 
     steps:
@@ -31,16 +31,11 @@ jobs:
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "16.2"
+          xcode-version: "26.6"
 
       - name: Validate semantic version tag
         shell: bash
         run: bash scripts/verify-release.sh "$RELEASE_TAG"
-
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2.4.0
-        with:
-          swift-version: "6.2.1"
 
       - name: Show toolchain versions
         run: |
